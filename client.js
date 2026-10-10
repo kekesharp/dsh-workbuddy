@@ -104,6 +104,7 @@ window.__ModuleLoader__.load({
           <span>WorkBuddy 面板</span>
           <span class="dsh-wb-grow" id="dsh-wb-bar-status"></span>
           <button id="dsh-wb-btn-start" type="button">启动网关</button>
+          <button id="dsh-wb-btn-stop" type="button">停止网关</button>
           <button id="dsh-wb-btn-realm" type="button">切换区域</button>
           <button id="dsh-wb-btn-reload" type="button">刷新</button>
           <button id="dsh-wb-btn-ext" type="button">新窗口打开</button>
@@ -142,14 +143,29 @@ window.__ModuleLoader__.load({
         if (tip) tip.innerHTML = `WorkBuddy · <b>${sub}</b>`
         const bar = $('dsh-wb-bar-status')
         if (bar) {
+          const modeTag = status?.mode ? `${status.mode}${status.managed ? '/托管' : ''}` : '?'
           bar.textContent = up
-            ? `${status.gatewayUrl} · realm=${realm} · accounts=${accounts} · ready=${ready}`
-            : `网关未运行（${status?.gatewayUrl ?? '?'}）`
+            ? `${status.gatewayUrl} · ${modeTag} · realm=${realm} · accounts=${accounts} · ready=${ready}`
+            : `网关未运行（${status?.gatewayUrl ?? '?'}）· ${modeTag}`
+          if (bar.title) bar.removeAttribute('title')
+          bar.title = [
+            status?.mode ? `来源：${status.mode}` : null,
+            status?.gatewayDir ? `代码：${status.gatewayDir}` : null,
+            status?.python ? `python：${status.python}` : null,
+            status?.dataDir ? `数据：${status.dataDir}` : null,
+            status?.managedPid ? `pid：${status.managedPid}` : null,
+            status?.stopOnExit === false ? '退出不停网关' : '退出即停网关',
+          ]
+            .filter(Boolean)
+            .join('\n')
         }
         const realmBtn = $('dsh-wb-btn-realm')
         if (realmBtn) realmBtn.disabled = !up
         const startBtn = $('dsh-wb-btn-start')
         if (startBtn) startBtn.disabled = up || status?.apiOk === false
+        // 只有「由本插件托管」的网关才给停止按钮——避免误杀别人起的实例
+        const stopBtn = $('dsh-wb-btn-stop')
+        if (stopBtn) stopBtn.disabled = !status?.managed || status?.apiOk === false
       }
 
       async function poll() {
@@ -228,6 +244,28 @@ window.__ModuleLoader__.load({
             window.alert('网关启动失败：' + String(err?.message ?? err))
           } finally {
             btn.textContent = '启动网关'
+            await poll()
+          }
+        })
+
+        $('dsh-wb-btn-stop').addEventListener('click', async () => {
+          const btn = $('dsh-wb-btn-stop')
+          btn.disabled = true
+          btn.textContent = '停止中…'
+          try {
+            const r = await fetch(API + '/gateway/stop', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+            })
+            const d = await r.json().catch(() => ({}))
+            if (d?.up) {
+              window.alert('网关未能停止：' + (d?.reason ?? '仍在响应'))
+            }
+          } catch (err) {
+            window.alert('网关停止失败：' + String(err?.message ?? err))
+          } finally {
+            btn.textContent = '停止网关'
             await poll()
           }
         })

@@ -1,9 +1,10 @@
 # dsh-workbuddy — bundle 默认配置
 #
-# 本插件把 WorkBuddy / CodeBuddy 网关（workbuddy2api 系）接进 DSH：
-#   1. DSH 启动时探测网关，未运行则按 launchScript 拉起（留空则只探测）；
+# 本插件把 WorkBuddy / CodeBuddy 网关接进 DSH，并**自带一份网关**：
+#   1. DSH 启动时探测网关；未运行就用内置的 vendor/wb-proxy 拉起（vendored 模式）；
 #   2. 页面右下角提供图标，点开即内嵌官方 Web 面板（账号 / 积分 / 用量 / 任务）；
-#   3. 通过 /workbuddy/* 暴露网关、账号、区域、模型状态。
+#   3. DSH 退出时，把由本插件启动的网关一并停掉（stopOnExit）；
+#   4. 通过 /workbuddy/* 暴露网关、账号、区域、模型状态。
 #
 # 这里只放**与任何机器无关**的默认值。需要本机路径或面板口令时，请在
 # 自己的 profile patch 里用 id 覆盖（替换语义；未写的字段由 lib/index.js
@@ -12,36 +13,63 @@
 #   # ~/.dsh/profiles/<profile>/cordis.patch.yml
 #   - id: workbuddy
 #     config:
-#       launchScript: ~/workbuddy2api-hub/wb-proxy/start-wb-proxy.sh
 #       panelPassword: <你的面板密码>
 #
 # `insert:` 在这里是必需的：裸的顶层 `- id:` 只能 patch 已存在于层栈中的条目，
 # 而 dsh-workbuddy 不在任何 bundle 层里（与 mcp-rea 同一情况）。
 #
-# 前置条件：本插件不打包网关，需先自行安装并跑通 workbuddy2api。
+# 前提：本机需有 Python 3.9+（macOS 自带 /usr/bin/python3 即可）。
 
 - insert:
     - id: workbuddy
       name: 'dsh-workbuddy'
       config:
-        # 网关地址；面板 iframe 与 /health 探测都用它。
-        # 写成 .../v1 也可以，插件会自动去掉后缀。
-        gatewayUrl: http://127.0.0.1:8788
-        # DSH 启动时若网关未运行，是否尝试拉起。
-        autoStart: true
-        # 网关启动脚本的绝对路径（支持 ~ 展开）。留空 = 只探测不拉起。
+        # ── 网关来源 ────────────────────────────────────────────────
+        # auto     = 有内置网关就用内置；否则看 gatewayDir / launchScript；都没有则只探测
+        # vendored = 强制使用插件自带的 vendor/wb-proxy
+        # external = 强制使用外部安装（gatewayDir 或 launchScript）
+        # off      = 只探测，从不启动
+        mode: auto
+        # 内置网关目录；留空 = 插件自带的 vendor/wb-proxy
+        vendorDir: ''
+        # 外部网关目录（需含 wb_proxy.py）；mode=external 时优先用它
+        gatewayDir: ''
+        # 外部启动脚本（备选，与 gatewayDir 二选一）。留空则不使用
         launchScript: ''
-        # 拉起时传入的端口，须与 gatewayUrl 一致。
+        # python 解释器路径；留空 = 自动探测 3.9+
+        pythonPath: ''
+
+        # ── 运行时数据（与代码目录分离，换来源不丢登录态）──────────
+        # 留空 = ~/.dsh/workbuddy-gateway。首次启动若该目录还没有 accounts/，
+        # 会自动从旧装（如 ~/workbuddy2api-hub/wb-proxy）迁移账号与用量。
+        dataDir: ''
+        # 指定旧装位置用于迁移；留空 = 自动探测常见路径
+        legacyDataDir: ''
+
+        # ── 生命周期 ────────────────────────────────────────────────
+        # DSH 启动时若网关未运行，是否自动拉起
+        autoStart: true
+        # DSH 退出时，是否停止由本插件启动/接管的网关（外部自行运行的不会被碰）
+        stopOnExit: true
+        # 停止时先 SIGTERM，超过该毫秒数仍未退出再 SIGKILL
+        stopGraceMs: 5000
+
+        # ── 端点与面板 ──────────────────────────────────────────────
+        # 网关地址；面板 iframe 与 /health 探测都用它（写成 .../v1 也可）
+        gatewayUrl: http://127.0.0.1:8788
+        # 拉起时传入的端口，须与 gatewayUrl 一致
         gatewayPort: 8788
         # 面板访问密码。留空 = 面板需手输一次、且 /workbuddy/realm 不可用。
         # 填了则进入面板自动登录，并解锁「切换区域」（该操作必须用面板会话，
         # API key 会被网关 403 拒绝）。密码不会写进日志。
         panelPassword: ''
-        # 后台健康检查间隔（毫秒）；0 = 关闭，仅在被请求时探测。
+
+        # ── 诊断 ────────────────────────────────────────────────────
+        # 后台健康检查间隔（毫秒）；0 = 关闭，仅在被请求时探测
         healthIntervalMs: 15000
         # 拉起后等待网关就绪的最长毫秒数。首次启动要探测 python、加载模型目录，
-        # 比固定等几秒慢得多；设太短会把「还在启动」误判成「启动失败」。
+        # 比固定等几秒慢得多；设太短会把「还在启动」误判成「启动失败」
         startTimeoutMs: 25000
-        # 网关 stdout/stderr 落盘位置；留空 = 启动脚本同目录的 dsh-gateway.log。
-        # 必须落盘：一旦启动失败（最常见是 8788 被占用），原因只在这份日志里。
+        # 网关 stdout/stderr 落盘位置；留空 = 数据目录下的 dsh-gateway.log。
+        # 必须落盘：一旦启动失败（最常见是端口被占用），原因只在这份日志里
         logPath: ''

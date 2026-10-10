@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbuddy",
-  "version": "0.1.0",
-  "description": "WorkBuddy / CodeBuddy 网关的 DSH 内置面板与账号管理：启动即探测/拉起 workbuddy2api 网关，把官方面板嵌进 DSH，并提供网关、账号、区域与模型状态 API。",
+  "version": "0.2.0",
+  "description": "把 WorkBuddy / CodeBuddy 网关接进 DeepSeek Harness：插件自带网关，随 DSH 启动自动拉起、退出自动停止，并在 DSH 内提供状态图标与官方 Web 面板。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -14,6 +14,7 @@
   "files": [
     "lib",
     "client.js",
+    "vendor",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
