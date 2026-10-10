@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbuddy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "把 WorkBuddy / CodeBuddy 网关接进 DeepSeek Harness：插件自带网关，随 DSH 启动自动拉起、退出自动停止，并在 DSH 内提供状态图标与官方 Web 面板。",
   "type": "module",
   "main": "lib/index.js",

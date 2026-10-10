@@ -64,6 +64,23 @@ PATH、终端之类的问题。
   （先 SIGTERM，`stopGraceMs` 后 SIGKILL）。
 - **不碰别人的进程**：如果 8788 上跑的是你自己起的网关，插件只探测、不接管，
   退出时也不会去停它。只有「本插件启动的」或「pidfile 指向的遗留进程」才归它管。
+- **中途挂了会自愈**：`watchdog: true`（默认）时，后台健康检查发现网关
+  **连续两次**不可达就自动重拉，中断窗口约 30 秒。用连续两次而不是单次判定，
+  是为了避免上游一时卡顿就误重启、反而打断健康的网关。两次重启之间有
+  `watchdogCooldownMs`（默认 30 秒）冷却，防止拉起风暴。
+
+> 为什么这条重要：网关中途退出时，DSH 侧只会显示模型的 `TRANSPORT` 错误，
+> 使用者根本不知道是网关挂了。有看门狗后，同一个请求重试一下往往就恢复了。
+
+### 装完不对劲？先跑自检
+
+```bash
+curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
+```
+
+它会逐项告诉你哪一环断了（vendor 在不在、python 找没找到、数据目录能不能写、
+账号有没有、端口是被占还是没起来），并在 `hints` 里给出下一步。
+输出约定：`✅` 通过、`❌` 真有问题、`—` 当前模式不适用、`ℹ️` 纯信息项。
 
 > 面板条右侧的 `vendored/托管` 标记就是这个状态；鼠标悬停可看到来源目录、
 > python、数据目录、pid。「停止网关」按钮只在**托管**状态下可用。
@@ -120,6 +137,7 @@ startTimeoutMs: 25000               # 拉起后等就绪的上限
 | GET | `/workbuddy/status` | 网关可达性 + `/health`，另含 `mode` / `gatewayDir` / `python` / `dataDir` / `managed` / `managedPid` / `stopOnExit` |
 | POST | `/workbuddy/gateway/start` | 拉起网关并**轮询等到就绪**；已运行则识别为「接管」或「外部实例」。失败时返回 `logTail` |
 | POST | `/workbuddy/gateway/stop` | 停止**由本插件托管**的网关（外部实例会拒绝，返回 `stopped:false`） |
+| GET | `/workbuddy/diagnose` | **一键自检**：逐项报告 vendor / python / 数据目录可写性 / 账号 / 端口 / 托管状态，并给出 `hints` |
 | GET | `/workbuddy/models` | 代理网关 `/v1/models` |
 | GET | `/workbuddy/realm` | 当前上游出口与可选值 |
 | POST | `/workbuddy/realm` | 切换出口，body `{"realm":"cn"\|"intl"}` |
