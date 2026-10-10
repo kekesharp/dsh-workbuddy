@@ -185,26 +185,54 @@ window.__ModuleLoader__.load({
 
 ## 分享 / 发布清单
 
-本插件可直接打包分享（MIT）。发布前**务必**处理这几项：
+本插件可直接打包分享（MIT）。**包内已经是中性配置**（不含任何机器的路径或口令），
+本机专属的值放在 profile 用户层，所以发布前不需要再清洗代码。
 
-| # | 事项 | 原因 |
+发布前只需确认：
+
+| # | 事项 | 说明 |
 |---|---|---|
-| 1 | `cp cordis.patch.yml.example cordis.patch.yml` | 在用那份含**本机路径**（`~/workbuddy2api-hub/...`）与**面板弱口令**；直接发布等于把自己的环境信息和口令写进包里 |
-| 3 | 确认 `lib/index.js` 的 `DEFAULTS` 是中性值 | `launchScript` / `panelPassword` 应为空串；插件不该预设任何机器的路径与口令 |
-| 4 | 检查没有其它泄露 | `grep -rn "shang\|/Users/\|127.0.0.1:8" . --exclude-dir=node_modules` |
+| 1 | `cordis.patch.yml` 是中性默认 | `launchScript: ''`、`panelPassword: ''`；`lib/index.js` 的 `DEFAULTS` 同样无预设 |
+| 2 | 自查无泄露 | `grep -rn "shang\|/Users/\|127.0.0.1:8" . --exclude-dir=.git --exclude-dir=node_modules` |
+| 3 | 版本与目标对齐 | `package.json` 的 `dshTarget` 与你的 DSH 版本 |
 
-然后：
+推送（仓库已初始化并完成首次提交）：
 
 ```bash
 cd ~/dsh-workbuddy
-git init && git add -A && git commit -m "dsh-workbuddy 0.1.0"
-# 推到你的仓库后，别人就能这样装：
-#   dsh plugin --profile desktop add github:<你的用户名>/dsh-workbuddy
+git remote add origin git@github.com:kekesharp/dsh-workbuddy.git
+git push -u origin main
 ```
 
+别人就能这样装：
+
+```bash
+dsh plugin --profile desktop add github:kekesharp/dsh-workbuddy
+```
+
+### 本机配置怎么放（重要）
+
+插件 bundle 提供的 config 是**默认值**；本机专属的值请写在自己的 profile patch 里：
+
+```yaml
+# ~/.dsh/profiles/<profile>/cordis.patch.yml —— 顶层追加
+- id: workbuddy
+  config:
+    launchScript: ~/workbuddy2api-hub/wb-proxy/start-wb-proxy.sh
+    panelPassword: <你的面板密码>
+```
+
+两点必须知道：
+
+- profile 层对 `config` 是**替换**语义，不是深合并——所以只写你要覆盖的字段即可，
+  其余字段（`gatewayUrl` / `gatewayPort` / `autoStart` / `healthIntervalMs` /
+  `panelAutoLogin`）由 `lib/index.js` 的 `DEFAULTS` 兜底。
+- 这是**顶层 `- id: workbuddy`**（覆盖已有条目），**不是** `- insert:`。用 `insert`
+  会因为 id 重复导致加载失败。
+
 > 插件通过 `package.json` 的 `dsh.bundle.patch` 自带配置，并从
-> `dsh.profile.bundles` 自动加载，**装在 profile 的 bundles 里即可**，不需要往
-> profile 的 `cordis.patch.yml` 里再写 `- insert:`（重复插入同 id 会让加载报错）。
+> `dsh.profile.bundles` 自动加载，**装进 profile 的 bundles 即可**。
+
 
 ### 同类插件（发布前先看一眼，避免重复造轮子）
 
