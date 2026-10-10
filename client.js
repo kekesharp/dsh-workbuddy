@@ -209,6 +209,7 @@ window.__ModuleLoader__.load({
           btn.disabled = true
           btn.textContent = '启动中…'
           try {
+            // 后端会轮询等就绪（默认最长 25s），这里要等得住
             const r = await fetch(API + '/gateway/start', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -216,7 +217,12 @@ window.__ModuleLoader__.load({
             })
             const d = await r.json().catch(() => ({}))
             if (!d?.up) {
-              window.alert('网关启动失败：' + (d?.reason ?? d?.error ?? `HTTP ${r.status}`))
+              const parts = []
+              parts.push(d?.reason ?? d?.error ?? `HTTP ${r.status}`)
+              if (d?.waitedMs) parts.push(`已等待 ${Math.round(d.waitedMs / 1000)}s`)
+              if (d?.logTail) parts.push('\n\n── 网关日志（末几行）──\n' + d.logTail)
+              else if (d?.logPath) parts.push('\n\n日志文件：' + d.logPath)
+              window.alert('网关启动失败：' + parts.join('\n'))
             }
           } catch (err) {
             window.alert('网关启动失败：' + String(err?.message ?? err))

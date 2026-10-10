@@ -167,6 +167,46 @@ window.__ModuleLoader__.load({
 
 ---
 
+## 网关的后台运行（不占终端）
+
+`autoStart` 用 `spawn(..., { detached: true, stdio: [ignore, fd, fd] })` 拉起网关，效果：
+
+- **不占终端窗口**：`fd 0/1/2` 分别指向 `/dev/null` 与日志文件，从不碰 tty；
+- **脱离 DSH**：`unref()` 后父进程变成 `launchd`（`PPID=1`），DSH 退出网关照常服务；
+- **状态可查**：`ps` 里应为 `STAT=Ss`（会话首进程、正常调度）。
+
+### ⚠️ 不要手动在终端里跑网关
+
+在终端里前台启动、然后**关掉终端窗口**，会造成一个很隐蔽的状态：
+
+```
+$ ps -o pid,ppid,stat,command -p <pid>
+  PID  PPID STAT  COMMAND
+15380  1069  T    /bin/bash ./start-wb-proxy.sh 8788      ← STAT=T = 被挂起
+15388 15380  T    Python ...                              ← 也挂起
+$ lsof -p 15388 | grep ttys
+  fd=1u CHR /dev/ttys000                                  ← stdout 还指着已关闭的终端
+```
+
+关终端时进程收到 **SIGTTOU 被挂起（stopped）**：既不死、也不干活，**却继续占着 8788 端口**。
+后果是点「启动网关」会失败（新进程报 `port is already in use`），而 `curl` 又连不上——
+一个「端口被占但服务不响应」的僵局。
+
+**恢复办法**：
+
+```bash
+# 1. 找出占着端口、且状态为 T 的僵尸进程
+lsof -nP -iTCP:8788 -sTCP:LISTEN
+ps -o pid,ppid,stat,command -p <上面的PID>
+
+# 2. 清掉它
+kill -9 <PID>
+
+# 3. 交给插件拉起（重启 DSH 即会 autoStart；或在右下角点「启动网关」）
+```
+
+---
+
 ## 排错
 
 | 现象 | 原因 / 处理 |
@@ -174,6 +214,8 @@ window.__ModuleLoader__.load({
 | 右下角没有胶囊 | bundle 层未加载 → 重启 DSH；检查 `package.json` 的 `dsh.profile.bundles` 是否含 `dsh-workbuddy` |
 | 启动即弹崩溃窗「web boot: 1 entry did not activate」 | `client.js` 不是 DSH 模块格式（见「实现约束 3」）：必须 `__ModuleLoader__.load({id, factory})`、`factory` 返回 exports、exports 带 `apply` |
 | 胶囊一直红「网关未运行」 | 网关没起：看 `launchScript` 路径是否存在、`/tmp/dsh-workbuddy-plugin.log` 是否记录拉起失败 |
+| 点「启动网关」失败，提示里带 `port is already in use` | 端口被占用。多半是终端里起过又被关终端挂起（`STAT=T`）的旧进程，见上一节 |
+| 点「启动网关」失败但只显示「HTTP 200」 | 旧版本症状：`stdio:'ignore'` 吞掉了网关输出。现在会把 `dsh-gateway.log` 末几行放进弹窗 |
 | 面板提示「无法连接反代」 | 面板被反代了。必须让 iframe 直连 `gatewayUrl`（见「实现约束 1」） |
 | 点「添加账号」报「发起失败: 405」 | 同上：面板的 `/accounts/*` 绝对路径请求落到了 DSH 源 |
 | 面板抽屉空白 | 直接访问 `gatewayUrl` 确认面板本身可用；检查 `panelIframeUrl` 是否正确 |
