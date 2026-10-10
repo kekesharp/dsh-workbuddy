@@ -1,0 +1,59 @@
+{
+  "name": "dsh-workbuddy",
+  "version": "0.1.0",
+  "description": "WorkBuddy / CodeBuddy 网关的 DSH 内置面板与账号管理：启动即探测/拉起 workbuddy2api 网关，把官方面板嵌进 DSH，并提供网关、账号、区域与模型状态 API。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "author": "dsh-workbuddy contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kekesharp/dsh-workbuddy.git"
+  },
+  "homepage": "https://github.com/OWNER/dsh-workbuddy#readme",
+  "bugs": {
+    "url": "https://github.com/kekesharp/dsh-workbuddy/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "workbuddy",
+    "codebuddy",
+    "workbuddy2api",
+    "llm-provider",
+    "gateway",
+    "panel",
+    "openai-compatible"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "dshTarget": "0.2.0-rc.2"
+}

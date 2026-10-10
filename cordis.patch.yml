@@ -1,0 +1,41 @@
+# dsh-workbuddy — bundle 默认配置
+#
+# 本插件把 WorkBuddy / CodeBuddy 网关（workbuddy2api 系）接进 DSH：
+#   1. DSH 启动时探测网关，未运行则按 launchScript 拉起（留空则只探测）；
+#   2. 页面右下角提供图标，点开即内嵌官方 Web 面板（账号 / 积分 / 用量 / 任务）；
+#   3. 通过 /workbuddy/* 暴露网关、账号、区域、模型状态。
+#
+# 这里只放**与任何机器无关**的默认值。需要本机路径或面板口令时，请在
+# 自己的 profile patch 里用 id 覆盖（替换语义；未写的字段由 lib/index.js
+# 的 DEFAULTS 兜底）：
+#
+#   # ~/.dsh/profiles/<profile>/cordis.patch.yml
+#   - id: workbuddy
+#     config:
+#       launchScript: ~/workbuddy2api-hub/wb-proxy/start-wb-proxy.sh
+#       panelPassword: <你的面板密码>
+#
+# `insert:` 在这里是必需的：裸的顶层 `- id:` 只能 patch 已存在于层栈中的条目，
+# 而 dsh-workbuddy 不在任何 bundle 层里（与 mcp-rea 同一情况）。
+#
+# 前置条件：本插件不打包网关，需先自行安装并跑通 workbuddy2api。
+
+- insert:
+    - id: workbuddy
+      name: 'dsh-workbuddy'
+      config:
+        # 网关地址；面板 iframe 与 /health 探测都用它。
+        # 写成 .../v1 也可以，插件会自动去掉后缀。
+        gatewayUrl: http://127.0.0.1:8788
+        # DSH 启动时若网关未运行，是否尝试拉起。
+        autoStart: true
+        # 网关启动脚本的绝对路径（支持 ~ 展开）。留空 = 只探测不拉起。
+        launchScript: ''
+        # 拉起时传入的端口，须与 gatewayUrl 一致。
+        gatewayPort: 8788
+        # 面板访问密码。留空 = 面板需手输一次、且 /workbuddy/realm 不可用。
+        # 填了则进入面板自动登录，并解锁「切换区域」（该操作必须用面板会话，
+        # API key 会被网关 403 拒绝）。密码不会写进日志。
+        panelPassword: ''
+        # 后台健康检查间隔（毫秒）；0 = 关闭，仅在被请求时探测。
+        healthIntervalMs: 15000

@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# 依赖 / 构建产物
+node_modules/
+pnpm-lock.yaml
+*.log
+
+# 打包产物
+*.tgz
+*.zip
+
+# 本地调试残留（插件运行时写到 /tmp，不应入库）
+dsh-workbuddy-plugin.log
