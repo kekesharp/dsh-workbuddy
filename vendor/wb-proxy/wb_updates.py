@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""wb_updates.py — 更新发现（只发现，不安装）。
+"""wb_updates.py — 稳定版更新发现。
 
-这个模块回答一个问题：官方仓库有没有比当前运行版本更新的稳定版？
+这个模块回答一个问题：配置的 GitHub 仓库有没有比当前运行版本更新的稳定版？
 
-它**只做发现**：拉一次 GitHub 的 releases 元数据、比较版本号、把结论交给面板。
-不下载、不解包、不替换文件、不重启进程——那些属于后续阶段。
+它只负责发现更新。安装请求由另一个 panel-only 路由交给受限 systemd 服务；
+这个模块本身仍不下载、不解包、不替换文件，也不重启进程。
 
 三条硬约束：
 
@@ -19,6 +19,7 @@
 """
 
 import json
+import os
 import re
 import threading
 import time
@@ -27,8 +28,27 @@ import urllib.request
 
 import wb_settings
 
-# 官方仓库的 releases 接口。走 API 不抓 HTML：页面结构变了不该让检查失效。
-RELEASES_URL = "https://api.github.com/repos/ardeyouxipianyi/workbuddy2api-hub/releases"
+# 默认仍指向官方仓库。自建 fork 的 systemd 服务可通过 WB_UPDATE_REPO 指定
+# 自己的 Release 源；该值只允许 owner/repo 形状，避免把更新请求导向任意主机。
+DEFAULT_REPOSITORY = "ardeyouxipianyi/workbuddy2api-hub"
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+
+
+def configured_repository():
+    value = str(os.environ.get("WB_UPDATE_REPO") or DEFAULT_REPOSITORY).strip()
+    return value if REPOSITORY_RE.fullmatch(value) else DEFAULT_REPOSITORY
+
+
+REPOSITORY = configured_repository()
+# 主路径走 Releases API；页面结构变化不应让更新检查失效。
+RELEASES_URL = "https://api.github.com/repos/%s/releases" % REPOSITORY
+# 回退路径：网页端点的 302 Location 末尾就是最新稳定版 tag。它按网页计流量，
+# 不受 API 那 60 次/小时/出口 IP 的匿名配额限制，也不需要凭据。
+LATEST_RELEASE_URL = "https://github.com/%s/releases/latest" % REPOSITORY
+TAG_RE = re.compile(r"/releases/tag/([^/?#]+)")
+# 可选凭据：认证请求的配额是 5000 次/小时。只从环境变量读，绝不落盘
+# （模块头第 3 条）。
+TOKEN_ENV = "GITHUB_TOKEN"
 USER_AGENT = "wb2api-hub-update-check"
 REQUEST_TIMEOUT = 5
 # 一份 releases 文档几十 KB；给足余量但设上限，坏响应不能把内存拉满。
@@ -122,13 +142,56 @@ def describe_failure(exc):
 
 
 def fetch_releases(url=RELEASES_URL, timeout=REQUEST_TIMEOUT):
-    """releases 文档的原始 JSON 文本；任何失败都抛异常给调用方。"""
-    request = urllib.request.Request(url, headers={
+    """releases 文档的原始 JSON 文本；任何失败都抛异常给调用方。
+
+    API 那一跳走的是**匿名**配额：60 次/小时/出口 IP。国内用户普遍从共享代理
+    节点出网，这份配额是整个出口共用的，被邻居先耗光时这一跳**必然**失败。所以
+    API 那一跳只要没成——403 也好、连接被掐也好——就退回网页端点，把同一条结论
+    拿回来；那边也失败才抛异常，抛的是 API 的原因，它才是主路径。
+    """
+    try:
+        return _fetch_api(url, timeout)
+    except Exception as api_error:
+        try:
+            return json.dumps([fetch_latest_release(timeout)])
+        except Exception:
+            raise api_error
+
+
+def _fetch_api(url, timeout):
+    headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/vnd.github+json",
-    })
+    }
+    token = str(os.environ.get(TOKEN_ENV) or "").strip()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(MAX_BODY).decode("utf-8", "replace")
+
+
+def fetch_latest_release(timeout=REQUEST_TIMEOUT):
+    """网页端点上的最新稳定版，返回一条 releases 条目。
+
+    releases/latest 会 302 到 /releases/tag/<tag>；urlopen 跟完重定向后
+    geturl() 就是那条最终地址，tag 直接从 URL 里取——不解析 HTML，页面改版也
+    不会让检查失效。发布日期这一跳给不出来，留空。
+    """
+    request = urllib.request.Request(LATEST_RELEASE_URL,
+                                     headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        final = response.geturl()
+    match = TAG_RE.search(final or "")
+    if not match:
+        raise ValueError("no release tag in the redirect target")
+    return {
+        "tag_name": match.group(1),
+        "draft": False,
+        "prerelease": False,
+        "html_url": final,
+        "published_at": "",
+    }
 
 
 def _stamp(value):
@@ -208,6 +271,7 @@ class UpdateChecker(threading.Thread):
         return {
             "current_version": self.current_version,
             "latest_version": latest or None,
+            "latest_tag": picked.get("tag") or "",
             "update_available": is_newer(latest, self.current_version),
             "enabled": self.enabled(),
             "checking": self._checking,

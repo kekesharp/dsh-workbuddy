@@ -13,11 +13,15 @@ import urllib.error
 import urllib.request
 
 import wb_accounts as _accounts
+import wb_identity
 
-CHAT_BASE = "https://copilot.tencent.com"
+# 默认 https://copilot.tencent.com；WB_CN_CHAT_UPSTREAM 可覆盖（见 wb_identity.CN_CHAT_BASE）。
+CHAT_BASE = wb_identity.CN_CHAT_BASE
 BILL_BASE = "https://www.codebuddy.cn"
 WEB_BASE = "https://www.workbuddy.cn"
-DESKTOP_UA = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1"
+#: 本模块只跑国内版，桌面端 UA 与 wb_identity 同一来源，避免两处各写一份
+#: 版本号（国际版 5.8.4 对齐时就是这么漏掉一份的）。
+DESKTOP_UA = wb_identity.DESKTOP_UA_CN
 WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 
 
@@ -106,6 +110,8 @@ TEAM_ID_POOL = [
 
 def fetch_growth_tasks(account):
     """查询成长任务列表及当前状态。"""
+    if getattr(account, "is_enterprise", lambda: False)():
+        return []
     url = CHAT_BASE + "/v2/activity/growth/tasks"
     req = urllib.request.Request(url, headers=account.headers("chat"))
     try:
@@ -148,15 +154,31 @@ def fetch_growth_summary(account):
             out["energy"] = (d.get("data") or {}).get("balance", 0)
     except Exception as exc:
         _log(f"growth/energy query failed: {exc}")
-    # 2. 连续打卡
+    # 2. 连续打卡、连登档位、补签卡与抽奖
     try:
         req = urllib.request.Request(CHAT_BASE + "/activity/growth/streak", headers=headers)
         with _accounts.urlopen(req, timeout=10, proxy=account.proxy) as resp:
             d = json.loads(resp.read().decode("utf-8"))
-            st = (d.get("data") or {}).get("streak") or {}
+            data = d.get("data") or {}
+            st = data.get("streak") or {}
             out["streak_days"] = st.get("days", 0)
+            out["makeup_cards"] = (data.get("makeup_cards") or {}).get("balance", 0)
+            redemp = data.get("redemption_status") or {}
+            out["tiers"] = redemp.get("tiers") or []
+            out["tier_statuses"] = {
+                "7d": redemp.get("tier_7d_status", "locked"),
+                "14d": redemp.get("tier_14d_status", "locked"),
+                "28d": redemp.get("tier_28d_status", "locked"),
+            }
     except Exception as exc:
         _log(f"growth/streak query failed: {exc}")
+    try:
+        req = urllib.request.Request(CHAT_BASE + "/activity/growth/lottery/summary", headers=headers)
+        with _accounts.urlopen(req, timeout=10, proxy=account.proxy) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+            out["lottery_chances"] = (d.get("data") or {}).get("chances", 0)
+    except Exception as exc:
+        _log(f"growth/lottery query failed: {exc}")
     # 3. 猫猫旅行
     try:
         req = urllib.request.Request(CHAT_BASE + "/activity/growth/buddy/travel/status", headers=headers)
@@ -167,6 +189,22 @@ def fetch_growth_summary(account):
         _log(f"buddy/travel/status query failed: {exc}")
     return out
 
+
+def fetch_streak_days(account):
+    """只读查询账号当前连续打卡天数（GET /activity/growth/streak）。
+
+    失败返回 None，不发写请求。供对话活跃上报后回显连登天数使用。
+    """
+    try:
+        req = urllib.request.Request(CHAT_BASE + "/activity/growth/streak",
+                                     headers=account.headers("chat"))
+        with _accounts.urlopen(req, timeout=10, proxy=account.proxy) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+            st = (d.get("data") or {}).get("streak") or {}
+            return st.get("days")
+    except Exception as exc:
+        _log(f"fetch_streak_days failed: {exc}")
+        return None
 
 def accept_tasks(account, codes, chunk=20):
     """批量接取任务。
@@ -428,6 +466,8 @@ def _travel_depart(account, lid):
 
 def do_cat_travel(account):
     """检查并执行猫猫旅行 (领奖 / 派出)。"""
+    if getattr(account, "is_enterprise", lambda: False)():
+        return {"ok": True, "action": "skip", "msg": "企业版账号无成长体系，跳过"}
     headers = account.headers("chat")
     # 1. 查询状态
     try:
@@ -486,7 +526,7 @@ def do_cat_travel(account):
     return {"ok": True, "action": state, "msg": f"当前状态: {state}"}
 
 
-def _progress_one(account, t, logs, gap):
+def _progress_one(account, t, logs, gap, claim=True):
     """推进单个任务并返回本次到账积分。
 
     auto 类任务不需要接取（上游 "task does not require acceptance"），事件可
@@ -510,6 +550,9 @@ def _progress_one(account, t, logs, gap):
     # (例如用户自己在桌面端用了一次, 或夜里调度器点亮了), 这类任务必须
     # 先结算, 不能因为"只能靠真实操作"就直接跳过丢掉奖励。
     if status == "completed" or cur >= tgt:
+        if not claim:
+            logs.append(f"⏸ 任务 [{spec['name']}] 已达成，等待手动领取")
+            return 0
         res = claim_task(account, code)
         if res.get("ok"):
             cr = res.get("credit", 0)
@@ -584,6 +627,10 @@ def _progress_one(account, t, logs, gap):
         return 0
 
     # 领奖
+    if not claim:
+        logs.append(f"⏸ 任务 [{spec['name']}] 已点亮，等待手动领取")
+        time.sleep(gap)
+        return 0
     res = claim_task(account, code)
     if res.get("ok"):
         cr = res.get("credit", 0)
@@ -595,10 +642,15 @@ def _progress_one(account, t, logs, gap):
     return 0
 
 
-def run_growth_tasks(account, gap=1.0):
-    """完整执行批量成长任务点亮与领奖。"""
+def run_growth_tasks(account, gap=1.0, claim=True):
+    """完整执行批量成长任务点亮与领奖。
+
+    claim=False 只推进进度、不领奖，让用户自己挑时间领取（#507）。
+    """
     if account.realm != "cn":
         return {"ok": False, "msg": "国际版不适用国内成长任务中心", "logs": []}
+    if getattr(account, "is_enterprise", lambda: False)():
+        return {"ok": True, "msg": "企业版账号无成长体系，跳过", "logs": []}
 
     logs = []
     logs.append(f"开始为账号 {account.nickname or account.uid[:8]} 运行成长任务自动化...")
@@ -614,7 +666,7 @@ def run_growth_tasks(account, gap=1.0):
     #    否则 single 任务接取会报 "prerequisite not met: first_buddy"。
     for t in tasks:
         if t.get("task_type") == "auto":
-            total_earned += _progress_one(account, t, logs, gap)
+            total_earned += _progress_one(account, t, logs, gap, claim=claim)
 
     # 1. 批量接取未接任务（auto 类不接受接取，unforgeable 无法自动化）
     def _needs_accept(x):
@@ -656,7 +708,7 @@ def run_growth_tasks(account, gap=1.0):
     for t in tasks:
         if t.get("task_type") == "auto":
             continue
-        total_earned += _progress_one(account, t, logs, gap)
+        total_earned += _progress_one(account, t, logs, gap, claim=claim)
 
     # 3. 顺手检查猫猫旅行
     tr_res = do_cat_travel(account)
@@ -676,6 +728,8 @@ def run_night_growth(account):
     每天计 1 次、累计 3 天后可领奖。白天调用会诚实跳过。"""
     if account.realm != "cn":
         return {"ok": False, "msg": "国际版不适用国内成长任务中心", "logs": [], "earned_credit": 0}
+    if getattr(account, "is_enterprise", lambda: False)():
+        return {"ok": True, "msg": "企业版账号无成长体系，跳过", "logs": [], "earned_credit": 0}
     logs = []
     name = account.nickname or account.uid[:8]
     if not in_night_window():
@@ -727,3 +781,113 @@ def run_night_growth(account):
         if m:
             earned = int(m.group(1))
     return {"ok": True, "earned_credit": earned, "logs": logs}
+
+def run_streak_bonus(account):
+    """连登管家：补签保连登 -> 礼包/补偿 -> 连登档位兑换 (7d/14d/28d) -> 自动抽奖闭环。
+
+    幂等设计：未解锁/已领/无次数/企业版均安全静默跳过。
+    """
+    if account.realm != "cn":
+        return {"ok": False, "msg": "连登管家仅限国内版账号"}
+    if getattr(account, "enterprise_id", None):
+        return {"ok": True, "msg": "企业版账号无成长体系，跳过"}
+
+    headers = account.headers("chat")
+    logs = []
+
+    # 0. 检查昨日漏签并自动补签
+    try:
+        req_hm = urllib.request.Request(CHAT_BASE + "/activity/growth/heatmap", headers=headers)
+        with _accounts.urlopen(req_hm, timeout=10, proxy=account.proxy) as resp:
+            hm_data = json.loads(resp.read().decode("utf-8"))
+            cells = (hm_data.get("data") or {}).get("cells", [])
+            yesterday_str = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+            y_cell = next((c for c in cells if c.get("date") == yesterday_str), None)
+            if y_cell and y_cell.get("score", 0) == 0:
+                # 查是否有补签卡
+                req_st = urllib.request.Request(CHAT_BASE + "/activity/growth/streak", headers=headers)
+                with _accounts.urlopen(req_st, timeout=10, proxy=account.proxy) as st_resp:
+                    st_data = json.loads(st_resp.read().decode("utf-8"))
+                    cards = ((st_data.get("data") or {}).get("makeup_cards") or {}).get("balance", 0)
+                    if cards > 0:
+                        body = json.dumps({"target_date": yesterday_str}).encode("utf-8")
+                        req_use = urllib.request.Request(CHAT_BASE + "/activity/growth/makeup-cards/use",
+                                                         data=body, method="POST", headers=headers)
+                        with _accounts.urlopen(req_use, timeout=10, proxy=account.proxy) as use_resp:
+                            logs.append(f"已消耗 1 张补签卡补签昨日 ({yesterday_str})")
+    except Exception as exc:
+        _log(f"makeup yesterday failed: {exc}")
+
+    # 1. 尝试领新手礼包与补偿 (每号一次，无则业务错误静默)
+    b_hdrs = account.headers("billing")
+    for path, name in [("/billing/meter/claim-gift", "新手礼包"),
+                       ("/billing/meter/claim-compensation", "活动补偿")]:
+        try:
+            req_g = urllib.request.Request(BILL_BASE + path, data=b"{}", method="POST", headers=b_hdrs)
+            with _accounts.urlopen(req_g, timeout=10, proxy=account.proxy) as resp:
+                d = json.loads(resp.read().decode("utf-8"))
+                if d.get("code") == 0:
+                    cr = (d.get("data") or {}).get("credit", 0)
+                    logs.append(f"领取{name} +{cr}积分")
+        except Exception:
+            pass
+
+    # 2. 检查 7d/14d/28d 连登档位兑换
+    try:
+        req_st = urllib.request.Request(CHAT_BASE + "/activity/growth/streak", headers=headers)
+        with _accounts.urlopen(req_st, timeout=10, proxy=account.proxy) as resp:
+            st_data = json.loads(resp.read().decode("utf-8"))
+            redemp = (st_data.get("data") or {}).get("redemption_status") or {}
+            tiers = redemp.get("tiers", [])
+            statuses = {
+                "7d": redemp.get("tier_7d_status"),
+                "14d": redemp.get("tier_14d_status"),
+                "28d": redemp.get("tier_28d_status"),
+            }
+            import uuid
+            for t in tiers:
+                tier_name = t.get("tier")
+                status = statuses.get(tier_name)
+                if status in ("locked", "claimed"):
+                    continue
+                body = json.dumps({"tier": tier_name, "client_token": str(uuid.uuid4())}).encode("utf-8")
+                req_rd = urllib.request.Request(CHAT_BASE + "/activity/growth/redeem",
+                                                data=body, method="POST", headers=headers)
+                try:
+                    with _accounts.urlopen(req_rd, timeout=10, proxy=account.proxy) as rd_resp:
+                        rd_json = json.loads(rd_resp.read().decode("utf-8"))
+                        if rd_json.get("code") == 0:
+                            logs.append(f"成功兑换连登 {tier_name} 档位")
+                except Exception as exc:
+                    _log(f"redeem {tier_name} failed: {exc}")
+    except Exception as exc:
+        _log(f"streak redeem check failed: {exc}")
+
+    # 3. 自动抽奖闭环 (有 chances 则全抽完)
+    drawn_count = 0
+    try:
+        req_lot = urllib.request.Request(CHAT_BASE + "/activity/growth/lottery/summary", headers=headers)
+        with _accounts.urlopen(req_lot, timeout=10, proxy=account.proxy) as resp:
+            lot_data = json.loads(resp.read().decode("utf-8"))
+            chances = (lot_data.get("data") or {}).get("chances", 0)
+            import uuid
+            for _ in range(chances):
+                body = json.dumps({"client_token": str(uuid.uuid4())}).encode("utf-8")
+                req_draw = urllib.request.Request(CHAT_BASE + "/activity/growth/lottery/draw",
+                                                  data=body, method="POST", headers=headers)
+                try:
+                    with _accounts.urlopen(req_draw, timeout=10, proxy=account.proxy) as draw_resp:
+                        d_res = json.loads(draw_resp.read().decode("utf-8"))
+                        if d_res.get("code") == 0:
+                            drawn_count += 1
+                except Exception as exc:
+                    _log(f"lottery draw failed: {exc}")
+                    break
+                time.sleep(1.0)
+            if drawn_count > 0:
+                logs.append(f"完成成长抽奖 {drawn_count} 次")
+    except Exception as exc:
+        _log(f"lottery summary failed: {exc}")
+
+    msg = "; ".join(logs) if logs else "连登状态正常（无需兑换/无抽奖次数）"
+    return {"ok": True, "logs": logs, "msg": msg}

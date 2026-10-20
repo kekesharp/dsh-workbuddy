@@ -12,3 +12,9 @@ pnpm-lock.yaml
 
 # 本地调试残留（插件运行时写到 /tmp，不应入库）
 dsh-workbuddy-plugin.log
+
+# 内置网关的运行时数据（正常在数据目录；这里兜住外部/旧版直接跑进 vendor 的情况）
+vendor/wb-proxy/accounts/
+vendor/wb-proxy/usage/
+vendor/wb-proxy/catalog/
+vendor/wb-proxy/__pycache__/

@@ -150,6 +150,7 @@ window.__ModuleLoader__.load({
           if (bar.title) bar.removeAttribute('title')
           bar.title = [
             status?.mode ? `来源：${status.mode}` : null,
+            status?.gatewayVersion ? `网关：${status.gatewayVersion}` : null,
             status?.gatewayDir ? `代码：${status.gatewayDir}` : null,
             status?.python ? `python：${status.python}` : null,
             status?.dataDir ? `数据：${status.dataDir}` : null,

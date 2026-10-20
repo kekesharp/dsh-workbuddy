@@ -1,0 +1,14 @@
+{
+  "project": "workbuddy2api-hub",
+  "repo": "https://github.com/ardeyouxipianyi/workbuddy2api-hub",
+  "tag": "v1.7.17",
+  "commit": "af706fc31e4a22cb2dea7442361b2b15185c3cee",
+  "synced_at": "2026-10-20",
+  "layout": "upstream repo root",
+  "files": [
+    "dashboard.html",
+    "pricing/pricing.json",
+    "wb_*.py"
+  ],
+  "note": "与上游同版本文件逐字节一致（仅行尾统一为 CRLF）。升级时整体替换这些文件，并更新本文件的 tag/commit/synced_at。"
+}

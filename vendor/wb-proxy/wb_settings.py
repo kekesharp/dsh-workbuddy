@@ -40,6 +40,14 @@ MAX_PRICING_REFRESH_MINUTES = 24 * 30 * 60
 DEFAULT_CREDITS_REFRESH_HOURS = 12.0
 MAX_CREDITS_REFRESH_HOURS = 24 * 30
 CREDITS_REFRESH_HOURS_KEY = "credits_refresh_hours"
+# Panel window height cap, in pixels: a dashboard window (section) taller than
+# this scrolls internally with its title row pinned, instead of stretching the
+# whole page. 0 turns the cap off. The default sits just above the log
+# terminal's own 620px so the terminal stays untouched until the user asks for
+# something smaller.
+SECTION_MAX_HEIGHT_KEY = "section_max_height"
+DEFAULT_SECTION_MAX_HEIGHT = 640
+MAX_SECTION_MAX_HEIGHT = 4000
 # Whether a model name may inherit its price from a suffix-stripped base
 # (deepseek-r1-0528-lkeap → deepseek-r1-0528). Missing key reads as on.
 PRICING_VARIANT_INHERIT_KEY = "pricing_variant_inherit"
@@ -52,6 +60,35 @@ PRICING_ENABLED_KEY = "pricing_enabled"
 # edit or an older client left behind both keep the default view, and only an
 # explicit true hides the accounts.
 ACCOUNTS_COLLAPSED_KEY = "accounts_collapsed"
+# Whether the panel's per-API-key table folds away its `(切换前)` row - the
+# legacy tail of requests logged before the key field existed. Same
+# normalisation as the disclosure above: only an explicit boolean true hides
+# the row, so a hand edit or an older client cannot drop it by accident.
+KEY_BEFORE_HIDDEN_KEY = "key_before_hidden"
+# Which top-bar pages the panel keeps out of the nav, as a list of page keys
+# ("tasks", "logs", ...). Deliberately not validated against a page registry:
+# the pages live in dashboard.html, and the panel ignores a key it does not
+# know, so adding or renaming a page upstream never needs a change here. A
+# missing key, a hand-written string or any other malformed value reads as
+# "nothing hidden" - the fail-safe direction for a display preference.
+HIDDEN_PAGES_KEY = "hidden_pages"
+# Page keys are the same lowercase identifiers switchMainTab() switches on.
+PAGE_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+# The one page that is never hidden, whatever the request or the file says: it
+# is where this switch itself lives, so hiding it would leave the panel with no
+# way back. Dropped during normalisation, so the stored file cannot hold it
+# either and no client of this API can lock itself out.
+PAGE_KEEP_VISIBLE = "settings"
+# Bound on the stored list. The panel sends at most one entry per page, so this
+# only limits what a hand edit can put in the file.
+MAX_HIDDEN_PAGES = 32
+# Whether the panel's account sections get a main tab of their own instead of
+# sharing the gateway page. Missing, or anything that is not the boolean true,
+# reads as off: an install that predates the setting keeps the single
+# "网关与账号" tab it has always had, and only an explicit true splits it into
+# 网关 + 账号. Same `is True` normalisation as the two switches above, so a
+# hand-edited "false", a 1 or an object cannot split the nav by accident.
+ACCOUNTS_SEPARATE_TAB_KEY = "accounts_separate_tab"
 
 # Instance-wide default UI language. The dashboard can override this per
 # browser with localStorage; this key is the fallback when no override exists.
@@ -67,6 +104,36 @@ UPDATE_CHECK_ENABLED_KEY = "update_check_enabled"
 # general update-state store: see update_check_state().
 UPDATE_CHECK_STATE_KEY = "update_check"
 
+# 剩余用量优先调度：把「估计剩余快耗尽」的 (账号, 模型) 先交出去（剩余越少
+# 权重越高）。缺失键读作关：估算本身是从撞线样本反推的，优先它是一次刻意的
+# 取舍（那些组合会明显多接流量），所以老安装保持原样的纯轮询。
+REMAINING_PRIORITY_ENABLED_KEY = "remaining_priority_enabled"
+
+# 出口级瞬时失败退避（issue #271）：传输类失败与 502/503/504 不再进账号级熔断
+# 计数，改记在出口上、退避降到秒级（见 wb_egress）。缺失键读作关：它改变的是
+# 派发路径上的失败归账与退避尺度，老安装保持原样（传输错误仍喂账号熔断）。
+EGRESS_BACKOFF_ENABLED_KEY = "egress_backoff_enabled"
+
+# 日志落库：把运行日志追加写进 usage/logs.sqlite3，重启后仍能回看，方便事后
+# debug。缺失键读作关 —— 关着的时候日志只留在内存环形缓冲里，与上游一字不差；
+# 只有显式 true 才建库、落盘。
+LOG_DB_ENABLED_KEY = "log_db_enabled"
+# 三条互相独立的保留上限，各自「留空 = 这一维不设限」：
+#   * rows  —— 只留最新的 N 条（空 = 不限条数）
+#   * days  —— 只留最近 N 天（空 = 不限天数；**默认 7 天**）
+#   * bytes —— 库文件超过 N 字节就从最旧的删起，缩回 N 以内（空 = 不限大小）
+# 天数给了 7 天默认值，是因为「无限增长的日志库」才是要防的那件事；条数与
+# 字节数留空（不限），因为单独看任何一个都可能偏严或偏松，交给使用者按需填。
+LOG_DB_MAX_ROWS_KEY = "log_db_max_rows"
+LOG_DB_MAX_DAYS_KEY = "log_db_max_days"
+LOG_DB_MAX_BYTES_KEY = "log_db_max_bytes"
+DEFAULT_LOG_DB_MAX_DAYS = 7
+# 上限只用来挡手滑：手编 settings.json 写个天文数字不该把裁剪循环拖死，也不该
+# 让面板显示一个溢出成科学计数法的值。都远大于任何真实部署会用的量级。
+MAX_LOG_DB_MAX_ROWS = 100_000_000
+MAX_LOG_DB_MAX_DAYS = 36500
+MAX_LOG_DB_MAX_BYTES = 100 * 1024 ** 3
+
 _lock = threading.RLock()
 
 
@@ -80,19 +147,45 @@ def _digest(password, salt_hex, rounds=PBKDF2_ROUNDS):
     ).hex()
 
 
+# settings.json 的解析结果按 (path, mtime, size) 缓存：请求热路径上它被读约 10
+# 次（prompt_config×2 / api_keys×2 / limits_data×3 / auto_switch_product /
+# upstream_config×2），单次 156~273µs，合计 1.6~2.7ms/请求。所有写入都走 save()
+# 的 os.replace 原子替换，mtime/size 必变，所以面板改动仍然即时生效；save() 里
+# 再主动失效一次，连 mtime 精度粗（FAT 只有 2s）的同尺寸改写也不会读到旧值。
+# 调用方拿到的是顶层浅拷贝：与原实现「每次重新解析、返回值随便改」的语义一致
+# （现网所有 setter 都只改顶层键再 save()，嵌套值按约定只读），改返回值也不会
+# 弄脏缓存。
+_load_cache = {"key": None, "value": {}}
+
+
 def load(accounts_dir):
-    """Return the persisted settings, or an empty dict on a fresh install."""
+    """Return the persisted settings, or an empty dict on a fresh install.
+
+    Cached on (path, mtime, size); the returned dict is a fresh top-level copy
+    so callers keep the previous "mutate freely" semantics.
+    """
     path = settings_path(accounts_dir)
     try:
+        info = os.stat(path)
+        key = (path, info.st_mtime, info.st_size)
+    except OSError:
+        key = (path, None, None)
+    with _lock:
+        if _load_cache["key"] == key:
+            return dict(_load_cache["value"])
+    data = {}
+    try:
         with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict):
-            return data
+            parsed = json.load(fh)
+        if isinstance(parsed, dict):
+            data = parsed
     except FileNotFoundError:
         pass
     except Exception:
         pass
-    return {}
+    with _lock:
+        _load_cache.update({"key": key, "value": data})
+    return dict(data)
 
 
 def save(accounts_dir, data):
@@ -104,6 +197,9 @@ def save(accounts_dir, data):
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
+        # 写完主动失效：不依赖文件系统 mtime 的精度（FAT 只有 2s），保证同尺寸
+        # 改写的下一个 load() 一定重新读盘。
+        _load_cache["key"] = None
         return path
 
 
@@ -272,12 +368,18 @@ def _clean_key_entry(entry):
     realm = str(entry.get("realm") or "").strip().lower()
     if realm not in REALMS:
         realm = ""
+    try:
+        concurrency = int(entry.get("concurrency_limit") or entry.get("max_concurrency") or 0)
+    except (TypeError, ValueError):
+        concurrency = 0
+    concurrency = max(0, concurrency)
     return {
         "id": str(entry.get("id") or secrets.token_hex(6)),
         "name": str(entry.get("name") or "").strip() or "未命名",
         "key": key,
         "realm": realm,
         "models": _clean_model_patterns(entry.get("models")),
+        "concurrency_limit": concurrency,
         "enabled": False if deleted_at else entry.get("enabled", True) is not False,
         "created_at": entry.get("created_at") or time.strftime("%Y/%m/%d %H:%M"),
         "deleted_at": deleted_at,
@@ -636,6 +738,27 @@ def limit_value(accounts_dir, key, realm=None):
     return entry.get("global") or 0
 
 
+def limit_values_many(accounts_dir, keys):
+    """Several guards resolved for every realm, off one settings read.
+
+    limit_values() per key re-reads the file (cached by mtime/size, so a stat)
+    and re-normalizes the whole grouped map every call; the daily guards all
+    want the same map on the request path, so they share one read here. One
+    implementation only: limit_values() is this with a single key.
+    """
+    grouped = limits_data(accounts_dir)
+    out = {}
+    for key in keys:
+        entry = grouped.get(key) or _empty_limit_entry()
+        global_value = entry.get("global") or 0
+        values = {"global": global_value}
+        for realm in LIMIT_REALMS:
+            override = entry.get(realm)
+            values[realm] = global_value if override is None else override
+        out[key] = values
+    return out
+
+
 def limit_values(accounts_dir, key):
     """One guard resolved for every realm plus the global it inherits.
 
@@ -643,13 +766,7 @@ def limit_values(accounts_dir, key):
     the global value when no override is set, so the pool can hand each
     account its own realm without a second settings lookup.
     """
-    entry = limits_data(accounts_dir).get(key) or _empty_limit_entry()
-    global_value = entry.get("global") or 0
-    values = {"global": global_value}
-    for realm in LIMIT_REALMS:
-        override = entry.get(realm)
-        values[realm] = global_value if override is None else override
-    return values
+    return limit_values_many(accounts_dir, (key,))[key]
 
 
 def set_limit(accounts_dir, key, scope, value):
@@ -791,6 +908,179 @@ def set_credits_refresh_hours(accounts_dir, value):
         data[CREDITS_REFRESH_HOURS_KEY] = hours
         save(accounts_dir, data)
     return hours
+
+
+#: 后台排程时段（CST 24 小时制）。默认值与旧版硬编码完全一致，老安装行为不变。
+DEFAULT_SCHEDULE_HOURS = {
+    "checkin": [9, 21],
+    "travel": [9, 21],
+    "keepalive": [22],
+    "cat": [1],
+}
+SCHEDULE_KEYS = ("checkin", "travel", "keepalive", "cat")
+
+
+def _normalize_hours(value):
+    """Coerce a list / comma string into sorted unique hours 0-23, or None."""
+    if isinstance(value, str):
+        raw = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        raw = list(value)
+    else:
+        return None
+    out = set()
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        try:
+            hour = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23:
+            out.add(hour)
+    return sorted(out) if out else None
+
+
+def schedule_hours(accounts_dir):
+    """Background schedule hours, falling back per key to the legacy defaults.
+
+    Missing / invalid / out-of-range / empty entries fall back to the default
+    for that key, so a hand-edited settings.json cannot stop the scheduler.
+    Comma-separated strings are accepted like the other settings readers.
+    """
+    raw = load(accounts_dir).get("schedule")
+    if not isinstance(raw, dict):
+        raw = {}
+    out = {}
+    for key in SCHEDULE_KEYS:
+        hours = _normalize_hours(raw.get(key))
+        out[key] = hours if hours is not None else list(DEFAULT_SCHEDULE_HOURS[key])
+    return out
+
+
+def set_schedule_hours(accounts_dir, value):
+    """Persist a partial schedule update; returns the normalized full schedule.
+
+    Unknown keys are ignored. A supplied key must contain at least one valid
+    hour, otherwise ValueError is raised so the caller can return a readable
+    400 instead of storing a schedule that silently does nothing.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("schedule must be an object")
+    with _lock:
+        data = load(accounts_dir)
+        current = data.get("schedule")
+        if not isinstance(current, dict):
+            current = {}
+        merged = {}
+        for key in SCHEDULE_KEYS:
+            if key in value:
+                hours = _normalize_hours(value.get(key))
+                if hours is None:
+                    raise ValueError("schedule.%s must contain hours 0-23" % key)
+                merged[key] = hours
+            else:
+                hours = _normalize_hours(current.get(key))
+                merged[key] = hours if hours is not None else list(DEFAULT_SCHEDULE_HOURS[key])
+        data["schedule"] = merged
+        save(accounts_dir, data)
+    return merged
+
+
+def section_max_height(accounts_dir):
+    """Panel window height cap in pixels; 0 means no limit.
+
+    Anything that is not a whole number falls back to the default, so a
+    hand-edited settings.json cannot leave the dashboard with windows a pixel
+    tall; a value past MAX_SECTION_MAX_HEIGHT is clamped, not rejected. bool is
+    checked first on purpose: it is an int subclass, and True would otherwise
+    read as a 1px cap.
+    """
+    with _lock:
+        raw = load(accounts_dir).get(SECTION_MAX_HEIGHT_KEY)
+    if isinstance(raw, bool):
+        return DEFAULT_SECTION_MAX_HEIGHT
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is its own case: json.loads turns 1e400 into inf, and
+        # int(inf) raises it - one broken line must not 500 the settings view.
+        return DEFAULT_SECTION_MAX_HEIGHT
+    if value < 0:
+        return DEFAULT_SECTION_MAX_HEIGHT
+    return min(value, MAX_SECTION_MAX_HEIGHT)
+
+
+def set_section_max_height(accounts_dir, value):
+    """Persist the cap. Returns the stored value."""
+    if isinstance(value, bool):
+        number = DEFAULT_SECTION_MAX_HEIGHT
+    else:
+        try:
+            number = int(value)
+        except (TypeError, ValueError, OverflowError):
+            number = DEFAULT_SECTION_MAX_HEIGHT
+    number = max(0, min(MAX_SECTION_MAX_HEIGHT, number))
+    with _lock:
+        data = load(accounts_dir)
+        data[SECTION_MAX_HEIGHT_KEY] = number
+        save(accounts_dir, data)
+    return number
+
+
+# 一键配置写进客户端的模型清单（DSH / OpenCode / Crush / ZCode 会把这份清单
+# 抄进自己的配置）。键不存在表示「从未选过」：面板默认全部不勾选，一键配置
+# 退回完整目录；显式保存空列表表示「用户全部取消」，一键配置会拒绝写空清单
+# ——空清单会生成一个没有模型的 provider，客户端直接不可用。
+AGENT_MODELS_KEY = "agent_models"
+# 清单写进客户端配置后会被逐条展开；200 条已远超任何出口的模型数，上限只挡
+# 手编 settings.json 把客户端配置撑爆。
+MAX_AGENT_MODELS = 200
+
+
+def _clean_agent_models(models):
+    """清洗模型 id 列表：只留非空字符串、去重保序、限量。"""
+    out = []
+    seen = set()
+    if not isinstance(models, (list, tuple)):
+        return out
+    for item in models:
+        if not isinstance(item, str):
+            continue
+        mid = item.strip()
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        out.append(mid)
+        if len(out) >= MAX_AGENT_MODELS:
+            break
+    return out
+
+
+def agent_model_selection(accounts_dir):
+    """面板勾选的模型 id；None 表示还没保存过（与空列表语义不同）。
+
+    None 让一键配置退回完整目录（升级前的老安装行为）；[] 是用户明确全部
+    取消，一键配置会拒绝写一个空的模型清单。
+    """
+    with _lock:
+        data = load(accounts_dir)
+    raw = data.get(AGENT_MODELS_KEY)
+    if not isinstance(raw, list):
+        # 手编坏了的键（字符串 / 对象 / null）按「没保存过」处理：宁可按老行为
+        # 退回完整目录，也不要因为一条脏数据让一键配置永远拒绝写模型清单。
+        return None
+    return _clean_agent_models(raw)
+
+
+def set_agent_model_selection(accounts_dir, models):
+    """保存勾选并返回清洗后的列表；空列表也会落盘（它的语义是「全不勾」）。"""
+    cleaned = _clean_agent_models(models)
+    with _lock:
+        data = load(accounts_dir)
+        data[AGENT_MODELS_KEY] = cleaned
+        save(accounts_dir, data)
+    return cleaned
 
 
 def _clamp_refresh_minutes(value):
@@ -990,6 +1280,56 @@ def set_upstream_config(accounts_dir, cfg):
     return clean
 
 
+USAGE_DEFAULTS = {
+    "hour_keep_hours": 48,
+    "day_keep_days": 32,
+}
+
+# 上限只是防手滑：面板输入框贴错位数会把 checkpoint 撑到几百 MB，而它每推进
+# 一点就要整份重写——路由器上 flash 写入慢且费寿命。两周的小时层、一年的日桶
+# 已经远超任何窗口够得到的范围。
+USAGE_LIMITS = {
+    "hour_keep_hours": 24 * 14,
+    "day_keep_days": 366,
+}
+
+def validate_usage_patch(raw):
+    """Strict validation for a panel-saved aggregate-retention patch."""
+    out = {}
+    for key, value in (raw or {}).items():
+        if key not in USAGE_DEFAULTS:
+            raise ValueError("unknown usage setting %r" % key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("%s must be a whole number" % key)
+        if value < 1:
+            raise ValueError("%s cannot be less than 1" % key)
+        if value > USAGE_LIMITS[key]:
+            raise ValueError("%s cannot be more than %d" % (key, USAGE_LIMITS[key]))
+        out[key] = value
+    return out
+
+def usage_config(accounts_dir):
+    """聚合保留窗口（小时层 / 日桶）。面板没设过就是内置默认值。"""
+    stored = load(accounts_dir).get("usage")
+    stored = stored if isinstance(stored, dict) else {}
+    out = {}
+    for key, default in USAGE_DEFAULTS.items():
+        value = stored.get(key, default)
+        if (isinstance(value, bool) or not isinstance(value, int)
+                or value < 1 or value > USAGE_LIMITS[key]):
+            value = default
+        out[key] = value
+    return out
+
+def set_usage_config(accounts_dir, patch):
+    """Persist a validated aggregate-retention patch."""
+    clean = validate_usage_patch(patch)
+    with _lock:
+        data = load(accounts_dir)
+        data["usage"] = deep_merge(data.get("usage"), clean)
+        save(accounts_dir, data)
+    return clean
+
 PROMPT_DEFAULTS = {
     "mode": "passthrough",
     "file": "",
@@ -1045,6 +1385,58 @@ def set_prompt_config(accounts_dir, cfg):
     return clean
 
 
+def enable_anthropic_messages(accounts_dir):
+    """Whether Anthropic Messages compatibility layer is enabled via panel settings."""
+    return load(accounts_dir).get("enable_anthropic_messages") is True
+
+
+def set_enable_anthropic_messages(accounts_dir, enabled):
+    """Persist the Anthropic Messages toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["enable_anthropic_messages"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def free_model_credit_fallback(accounts_dir):
+    """Whether exhausted free models (deepseek-v4.1-flash) can fall back to credit siblings."""
+    return load(accounts_dir).get("free_model_credit_fallback") is True
+
+
+def set_free_model_credit_fallback(accounts_dir, enabled):
+    """Persist the free model credit fallback toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["free_model_credit_fallback"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def filter_models_by_key(accounts_dir):
+    """Whether /v1/models hides models the requesting key may not use.
+
+    Off by default: the endpoint has always advertised the upstream catalogue,
+    and an install that predates this setting keeps behaving exactly as it did.
+    When on, a key with a model restriction only sees the models it allows, so
+    clients that auto-discover the catalogue cannot pick one that is later
+    rejected at request time. Keys without a restriction still see everything.
+    """
+    return load(accounts_dir).get("filter_models_by_key") is True
+
+
+def set_filter_models_by_key(accounts_dir, enabled):
+    """Persist the /v1/models key filter toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["filter_models_by_key"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
 def auto_switch_product(accounts_dir):
     """Whether an upstream 429 may rotate an account's outbound identity.
 
@@ -1064,6 +1456,267 @@ def set_auto_switch_product(accounts_dir, enabled):
         data["auto_switch_product"] = enabled
         save(accounts_dir, data)
     return enabled
+
+
+#: 出站身份自动切换允许落在哪些身份上（默认三条都允许，保持旧行为）。
+AUTO_SWITCH_PRODUCTS = ("workbuddy", "vscode", "cli")
+
+
+def auto_switch_products(accounts_dir):
+    """Allowed target identities for the 429 auto-switch.
+
+    Defaults to all three so an install that predates this setting keeps the
+    old behaviour. Unknown entries are dropped rather than failing the read.
+    """
+    raw = load(accounts_dir).get("auto_switch_products")
+    if not isinstance(raw, list):
+        return list(AUTO_SWITCH_PRODUCTS)
+    out = []
+    for item in raw:
+        if isinstance(item, str) and item in AUTO_SWITCH_PRODUCTS and item not in out:
+            out.append(item)
+    return out
+
+
+def set_auto_switch_products(accounts_dir, products):
+    """Persist the allowed auto-switch identities. Returns the stored list.
+
+    Raises ValueError for anything that is not a list of known product ids, so
+    the panel gets a readable 400 instead of silently storing garbage.
+    """
+    if not isinstance(products, list):
+        raise ValueError("auto_switch_products must be a list")
+    clean = []
+    for item in products:
+        if not isinstance(item, str) or item not in AUTO_SWITCH_PRODUCTS:
+            raise ValueError("unknown auto-switch product: %r" % (item,))
+        if item not in clean:
+            clean.append(item)
+    with _lock:
+        data = load(accounts_dir)
+        data["auto_switch_products"] = clean
+        save(accounts_dir, data)
+    return clean
+
+
+#: X-Private-Data is the official client's "may this conversation train the
+#: model" declaration. auto keeps the per-identity value the gateway already
+#: sends; true/false override it for every identity (issue #516).
+IDENTITY_KEY = "identity"
+IDENTITY_PRIVATE_DATA_VALUES = ("auto", "true", "false")
+
+
+def identity_private_data(accounts_dir):
+    """The configured X-Private-Data override: auto, true or false."""
+    raw = load(accounts_dir).get(IDENTITY_KEY)
+    if not isinstance(raw, dict):
+        return "auto"
+    value = str(raw.get("private_data") or "auto").strip().lower()
+    return value if value in IDENTITY_PRIVATE_DATA_VALUES else "auto"
+
+
+def identity_config(accounts_dir):
+    return {"private_data": identity_private_data(accounts_dir)}
+
+
+def set_identity_private_data(accounts_dir, value):
+    """Persist the X-Private-Data override. Returns the normalized value."""
+    value = str(value or "auto").strip().lower()
+    if value not in IDENTITY_PRIVATE_DATA_VALUES:
+        raise ValueError("identity.private_data must be auto, true or false")
+    with _lock:
+        data = load(accounts_dir)
+        identity = data.get(IDENTITY_KEY)
+        if not isinstance(identity, dict):
+            identity = {}
+        identity["private_data"] = value
+        data[IDENTITY_KEY] = identity
+        save(accounts_dir, data)
+    return value
+
+
+def remaining_priority_enabled(accounts_dir):
+    """Whether pairs close to their estimated remaining quota are served first.
+
+    Off unless the operator turns it on. The remaining-usage estimate is
+    inferred from cap events and the usage log, and preferring the pairs that
+    are close to their estimated limit is a deliberate trade: they take a
+    visibly larger share of the traffic, which is the point of the preference
+    (spend the quota that would otherwise lapse with the window). An install
+    that predates the switch keeps the plain round-robin, so nothing changes
+    until it is explicitly turned on.
+    """
+    return load(accounts_dir).get(REMAINING_PRIORITY_ENABLED_KEY) is True
+
+
+def set_remaining_priority_enabled(accounts_dir, enabled):
+    """Persist the remaining-usage priority switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data[REMAINING_PRIORITY_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def egress_backoff_enabled(accounts_dir):
+    """Whether transient failures are accounted per egress instead of per account.
+
+    Off unless the operator turns it on. Turning it on changes how a transport
+    failure or a 502/503/504 is punished: it stops feeding the account breaker
+    (30 minutes, doubling to 6h) and instead grows a seconds-level backoff on the
+    outbound path the request actually used (see wb_egress). That is the fix for
+    issue #271 - a few seconds of link flakiness used to park healthy accounts
+    for half an hour - but it is a change to dispatch behaviour, so an install
+    that predates the switch keeps the old accounting.
+    """
+    return load(accounts_dir).get(EGRESS_BACKOFF_ENABLED_KEY) is True
+
+
+def set_egress_backoff_enabled(accounts_dir, enabled):
+    """Persist the egress-level backoff switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data[EGRESS_BACKOFF_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def log_db_enabled(accounts_dir):
+    """Whether runtime logs are also appended to usage/logs.sqlite3.
+
+    Off unless the operator turns it on: with the switch off the log lives only
+    in the in-memory ring, exactly as it does upstream, and no database file is
+    created. Turning it on starts a durable copy so a crash, a restart or a
+    slow-moving incident can still be read back afterwards.
+    """
+    return load(accounts_dir).get(LOG_DB_ENABLED_KEY) is True
+
+
+def set_log_db_enabled(accounts_dir, enabled):
+    """Persist the log-database switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data[LOG_DB_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def _positive_cap(raw, fallback, hard_max):
+    """One retention cap read back: a positive whole number, clamped.
+
+    Anything that is not a usable positive integer (a bool, text, 0, a negative,
+    a hand-edited 1e400) falls back instead of raising - a broken settings.json
+    must not take the log path down with it.
+    """
+    if isinstance(raw, bool):
+        return fallback
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    if value <= 0:
+        return fallback
+    return min(value, hard_max)
+
+
+def _clearable_cap(value, hard_max):
+    """One retention cap on its way to disk: blank or nonsense means "no cap".
+
+    The panel posts an empty string for a field the operator cleared, and 0 is
+    the same intent typed out. Both land as None (JSON null), which is what the
+    getters read back as "unlimited on this axis".
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if number <= 0:
+        return None
+    return min(number, hard_max)
+
+
+def log_db_max_rows(accounts_dir):
+    """Newest-N row cap for the log database; None means no row cap.
+
+    Absent key reads as None: a fresh install keeps every row until the days
+    cap trims it, which is what "rows left blank" asks for.
+    """
+    data = load(accounts_dir)
+    if LOG_DB_MAX_ROWS_KEY not in data:
+        return None
+    raw = data.get(LOG_DB_MAX_ROWS_KEY)
+    if raw is None:
+        return None
+    return _positive_cap(raw, None, MAX_LOG_DB_MAX_ROWS)
+
+
+def set_log_db_max_rows(accounts_dir, value):
+    """Persist the row cap (blank clears it). Returns the stored value."""
+    stored = _clearable_cap(value, MAX_LOG_DB_MAX_ROWS)
+    with _lock:
+        data = load(accounts_dir)
+        data[LOG_DB_MAX_ROWS_KEY] = stored
+        save(accounts_dir, data)
+    return stored
+
+
+def log_db_max_days(accounts_dir):
+    """Age cap for the log database, in days; None means no age cap.
+
+    Unlike the other two, an absent key reads as the 7-day default: an install
+    that has never touched the setting still gets a bounded database. Clearing
+    the field on purpose stores None and turns the cap off.
+    """
+    data = load(accounts_dir)
+    if LOG_DB_MAX_DAYS_KEY not in data:
+        return DEFAULT_LOG_DB_MAX_DAYS
+    raw = data.get(LOG_DB_MAX_DAYS_KEY)
+    if raw is None:
+        return None
+    return _positive_cap(raw, DEFAULT_LOG_DB_MAX_DAYS, MAX_LOG_DB_MAX_DAYS)
+
+
+def set_log_db_max_days(accounts_dir, value):
+    """Persist the age cap (blank clears it). Returns the stored value."""
+    stored = _clearable_cap(value, MAX_LOG_DB_MAX_DAYS)
+    with _lock:
+        data = load(accounts_dir)
+        data[LOG_DB_MAX_DAYS_KEY] = stored
+        save(accounts_dir, data)
+    return stored
+
+
+def log_db_max_bytes(accounts_dir):
+    """File-size cap for the log database, in bytes; None means no size cap.
+
+    Absent key reads as None, like the row cap: the days default is what keeps
+    a fresh install bounded, and the size cap is there for a deployment that
+    wants a hard ceiling on the file itself.
+    """
+    data = load(accounts_dir)
+    if LOG_DB_MAX_BYTES_KEY not in data:
+        return None
+    raw = data.get(LOG_DB_MAX_BYTES_KEY)
+    if raw is None:
+        return None
+    return _positive_cap(raw, None, MAX_LOG_DB_MAX_BYTES)
+
+
+def set_log_db_max_bytes(accounts_dir, value):
+    """Persist the size cap (blank clears it). Returns the stored value."""
+    stored = _clearable_cap(value, MAX_LOG_DB_MAX_BYTES)
+    with _lock:
+        data = load(accounts_dir)
+        data[LOG_DB_MAX_BYTES_KEY] = stored
+        save(accounts_dir, data)
+    return stored
 
 
 def daily_chat_web(accounts_dir):
@@ -1088,6 +1741,134 @@ def set_daily_chat_web(accounts_dir, enabled):
         data["daily_chat_web"] = enabled
         save(accounts_dir, data)
     return enabled
+
+
+def daily_chat_model(accounts_dir):
+    """Which model the intl daily activity runs on; "" keeps the built-in one.
+
+    The activity is two throwaway conversations ("Hi") whose only job is to
+    register the day, so it has no reason to spend credits. The built-in
+    default is already a free catalogue model, and this lets a deployment move
+    the activity onto a different free model - useful when the default one is
+    the same model the real traffic hammers, so the daily run does not eat its
+    window quota. Empty means "unset": the caller falls back to the built-in id.
+    """
+    value = load(accounts_dir).get("daily_chat_model")
+    return str(value or "").strip()
+
+
+def set_daily_chat_model(accounts_dir, model):
+    """Persist the daily-activity model id. Returns the stored string."""
+    model = str(model or "").strip()
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_model"] = model
+        save(accounts_dir, data)
+    return model
+
+
+#: 网页通道一轮等多久（秒）的默认值。与 wb_accounts.WEB_TURN_TIMEOUT 同值：
+#: 没配过的部署保持既有行为，改过的部署按自己配的来。
+DAILY_CHAT_WEB_TIMEOUT_DEFAULT = 120
+#: 上限只是防手滑。每轮等待时间翻倍，配成几百秒会让单账号最坏情况跑到小时级。
+DAILY_CHAT_WEB_TIMEOUT_MAX = 3600
+#: 网页通道总共试几次（含第一轮）的默认值，与 wb_accounts.WEB_TURN_ATTEMPTS 同值。
+DAILY_CHAT_WEB_ATTEMPTS_DEFAULT = 3
+#: 上限同样只是防手滑：最坏等待是 base×(2^次数−1) 秒，5 次已经接近一小时。
+DAILY_CHAT_WEB_ATTEMPTS_MAX = 5
+
+
+def daily_chat_web_retry(accounts_dir):
+    """Whether a failed web-channel turn is tried again.
+
+    On unless the operator turns it off. The usual failure is a session that is
+    still ``working`` when the first wait runs out - slow, not broken - and the
+    daily activity is the only thing that earns the 30/50 credits, so giving up
+    on the first timeout silently loses the day. Off restores the old
+    single-attempt behaviour.
+    """
+    value = load(accounts_dir).get("daily_chat_web_retry")
+    return True if value is None else value is True
+
+
+def set_daily_chat_web_retry(accounts_dir, enabled):
+    """Persist the web-channel retry toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_retry"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def daily_chat_web_attempts(accounts_dir, default=None):
+    """How many times the web channel is tried in total, the first one included.
+
+    ``default`` is what an unset install gets, so a caller with its own
+    built-in default keeps it. Out-of-range or non-integer values fall back to
+    it too, so a hand-edited settings.json cannot park the sweep on one
+    account.
+    """
+    if default is None:
+        default = DAILY_CHAT_WEB_ATTEMPTS_DEFAULT
+    value = load(accounts_dir).get("daily_chat_web_attempts")
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < 1 or value > DAILY_CHAT_WEB_ATTEMPTS_MAX):
+        return default
+    return value
+
+
+def set_daily_chat_web_attempts(accounts_dir, attempts):
+    """Persist the total number of tries. Returns the stored whole number."""
+    if isinstance(attempts, bool) or not isinstance(attempts, int):
+        raise ValueError("daily_chat_web_attempts must be a whole number")
+    if attempts < 1:
+        raise ValueError("daily_chat_web_attempts cannot be less than 1")
+    if attempts > DAILY_CHAT_WEB_ATTEMPTS_MAX:
+        raise ValueError("daily_chat_web_attempts cannot be more than %d"
+                         % DAILY_CHAT_WEB_ATTEMPTS_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_attempts"] = attempts
+        save(accounts_dir, data)
+    return attempts
+
+
+def daily_chat_web_timeout(accounts_dir, default=None):
+    """Seconds to wait for the first web-channel turn; later tries double it.
+
+    ``default`` is what an unset install gets, so a caller that has its own
+    built-in default (the env-overridable ``WB_WEB_TURN_TIMEOUT``) keeps it
+    instead of being silently reset to 120 by this setting's existence.
+    Anything that is not a whole number in range also falls back to it, so a
+    hand-edited settings.json cannot make the scheduler hang on a huge value
+    or trip over a string.
+    """
+    if default is None:
+        default = DAILY_CHAT_WEB_TIMEOUT_DEFAULT
+    value = load(accounts_dir).get("daily_chat_web_timeout")
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < 1 or value > DAILY_CHAT_WEB_TIMEOUT_MAX):
+        return default
+    return value
+
+
+def set_daily_chat_web_timeout(accounts_dir, seconds):
+    """Persist the per-attempt wait. Returns the stored whole number of seconds."""
+    if isinstance(seconds, bool) or not isinstance(seconds, int):
+        raise ValueError("daily_chat_web_timeout must be a whole number of seconds")
+    if seconds < 1:
+        raise ValueError("daily_chat_web_timeout cannot be less than 1")
+    if seconds > DAILY_CHAT_WEB_TIMEOUT_MAX:
+        raise ValueError("daily_chat_web_timeout cannot be more than %d"
+                         % DAILY_CHAT_WEB_TIMEOUT_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_timeout"] = seconds
+        save(accounts_dir, data)
+    return seconds
+
+
 def local_web_tools(accounts_dir):
     """Whether the gateway runs web_search / web_fetch calls itself.
 
@@ -1133,6 +1914,93 @@ def set_accounts_collapsed(accounts_dir, collapsed):
     return collapsed
 
 
+def key_before_hidden(accounts_dir):
+    """Whether the per-API-key table folds away its `(切换前)` row.
+
+    Shown unless the stored value is the boolean true, with the same `is True`
+    normalisation as accounts_collapsed: the row is history worth seeing, so a
+    hand-edited "false", a 1, an object or a missing key must all leave it
+    visible rather than hide it by accident.
+    """
+    return load(accounts_dir).get(KEY_BEFORE_HIDDEN_KEY) is True
+
+
+def set_key_before_hidden(accounts_dir, hidden):
+    """Persist the `(切换前)` row disclosure state. Returns the stored boolean."""
+    hidden = bool(hidden)
+    with _lock:
+        data = load(accounts_dir)
+        data[KEY_BEFORE_HIDDEN_KEY] = hidden
+        save(accounts_dir, data)
+    return hidden
+
+
+def _clean_page_keys(value):
+    """Normalise a stored or patched page list into a clean list of keys.
+
+    Anything that is not a list of well-formed keys is dropped rather than
+    rejected, for the same reason the booleans above normalise instead of
+    raising: the file is hand-editable, and the fail-safe direction for a
+    display preference is "nothing hidden". Duplicates and over-long lists are
+    collapsed so a hand edit cannot turn the panel's nav into a repeat of one
+    entry.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if not PAGE_KEY_RE.match(key) or key == PAGE_KEEP_VISIBLE or key in out:
+            continue
+        out.append(key)
+        if len(out) >= MAX_HIDDEN_PAGES:
+            break
+    return out
+
+
+def hidden_pages(accounts_dir):
+    """The top-bar pages the panel hides. Empty on a fresh install.
+
+    Normalised on every read, so a hand edit that puts a string, an unknown key
+    or a duplicate in the file cannot hide a page twice or hide something the
+    panel would then be unable to put back.
+    """
+    return _clean_page_keys(load(accounts_dir).get(HIDDEN_PAGES_KEY))
+
+
+def set_hidden_pages(accounts_dir, pages):
+    """Persist the hidden-page list. Returns the stored (normalised) list."""
+    cleaned = _clean_page_keys(pages)
+    with _lock:
+        data = load(accounts_dir)
+        data[HIDDEN_PAGES_KEY] = cleaned
+        save(accounts_dir, data)
+    return cleaned
+
+
+def accounts_separate_tab(accounts_dir):
+    """Whether the panel gives the account sections a main tab of their own.
+
+    Off unless the stored value is the boolean true, with the same `is True`
+    normalisation as the disclosures above: the merged "网关与账号" tab is what
+    every install has always shown, so a hand-edited "false", a 1, an object or
+    a missing key must all keep it rather than split the nav by accident.
+    """
+    return load(accounts_dir).get(ACCOUNTS_SEPARATE_TAB_KEY) is True
+
+
+def set_accounts_separate_tab(accounts_dir, separate):
+    """Persist the account-tab switch. Returns the stored boolean."""
+    separate = bool(separate)
+    with _lock:
+        data = load(accounts_dir)
+        data[ACCOUNTS_SEPARATE_TAB_KEY] = separate
+        save(accounts_dir, data)
+    return separate
+
+
 def update_check_enabled(accounts_dir):
     """Whether the gateway checks for a newer release once a day.
 
@@ -1150,6 +2018,28 @@ def set_update_check_enabled(accounts_dir, enabled):
     with _lock:
         data = load(accounts_dir)
         data[UPDATE_CHECK_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def window_probe(accounts_dir):
+    """是否在模型额度窗口重置时刻主动发探针请求，抢占新一轮计时。
+
+    上游的免费额度窗口按「首次请求」起算，打满后 429 会给出 `reset at`。
+    到点若无人请求，新一轮窗口就不会开始，额度一直空转。默认开启：这是
+    本网关把窗口起点钉在重置那一刻的唯一手段。关掉它的部署回到旧行为——
+    429 只记冷却，等真实请求自己撞上重置点。
+    """
+    value = load(accounts_dir).get("window_probe")
+    return True if value is None else value is True
+
+
+def set_window_probe(accounts_dir, enabled):
+    """Persist the window-probe switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["window_probe"] = enabled
         save(accounts_dir, data)
     return enabled
 
@@ -1196,6 +2086,49 @@ def record_update_check(accounts_dir, at=None, success=False, latest_version="")
         data[UPDATE_CHECK_STATE_KEY] = state
         save(accounts_dir, data)
     return update_check_state(accounts_dir)
+
+
+def _clean_quota_scan_models(value):
+    """Normalize the watch list into model ids in the order given.
+
+    Ids are kept verbatim (they are sent upstream as `model`), only trimmed and
+    de-duplicated; a hand-edited settings.json usually holds a comma-separated
+    string, so both shapes are accepted.
+    """
+    if isinstance(value, str):
+        raw = re.split(r"[,;\n]", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw = list(value)
+    else:
+        return []
+    out = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def quota_scan_models(accounts_dir):
+    """Model ids the operator asked to watch, whether throttled or not.
+
+    The window probe only knows about a quota line once something hit its 429;
+    this list is how a line can be checked *before* it is exhausted, so hitting
+    the limit is discovered on an idle timer instead of mid-request. Empty means
+    the feature is off, which is what an install that predates the setting reads
+    back as.
+    """
+    return _clean_quota_scan_models(load(accounts_dir).get("quota_scan_models"))
+
+
+def set_quota_scan_models(accounts_dir, models):
+    """Replace the watch list. Returns the stored list."""
+    cleaned = _clean_quota_scan_models(models)
+    with _lock:
+        data = load(accounts_dir)
+        data["quota_scan_models"] = cleaned
+        save(accounts_dir, data)
+    return cleaned
 
 
 _SLOT_ID_RE = re.compile(r"^slot-(\d+)$")
