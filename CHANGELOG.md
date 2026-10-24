@@ -2,6 +2,18 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
+## 0.5.0 — 2026-10-24
+
+**内置网关 1.7.17 → 1.7.33（上游 `47775c5`，tag `v1.7.33`）**
+
+- 整体替换 `vendor/wb-proxy` 的 `wb_*.py`、`dashboard.html`、`pricing/pricing.json`，与上游同版本逐字节一致（行尾统一 CRLF）。
+- 新增模块：`wb_tiers`（账号档位 / 计费摘要）、`wb_webprompts`（网页活跃随机提示词）、`wb_update_portable` / `wb_update_apply` / `wb_update_external`（面板一键更新与版本回退的执行链）。
+- 移除已被合并的 `wb_entitlements`（模型可用性标注改由目录 tier / `wb_tiers` 驱动）。
+- 上游自 **v1.7.33（2026-10-23）起进入低频维护**，并提示风控持续收紧；README 增加对应提示（风险自担、优先官方客户端）。
+- 这一批带来的主要能力：流式断流发标准 error 帧（不再伪造 `[DONE]`）、429 模型窗口跨重启恢复、静态 API Key（`ck_...`）账号、账号独立任务开关、账号级并发 + 会话粘滞、跨出口回退（默认关）、每日活跃预算 + 有序模型候选、身份句指纹扩展、思考档位映射、Pro Only 由目录 tier 驱动。
+- 插件侧无需改启动契约：`--host/--port/--accounts-dir/--usage-dir/--panel-password`、`/health`、`/panel/login`、`/realm`、`?pwd=` 面板登录均保持不变；`gatewayVersion` 继续从 `UPSTREAM.json` 读取。
+- README 的能力清单、徽章、同类项目星标同步更新。
+
 ## 0.4.0 — 2026-10-20
 
 **内置网关 1.6.19 → 1.7.17（上游 `af706fc`，tag `v1.7.17`）**
