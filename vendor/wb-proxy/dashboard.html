@@ -206,6 +206,32 @@ th.sortable:focus-visible .sort-arrow.idle{opacity:1}
 .bar-fill.think{background:var(--think)}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;border-radius:8px}
 .table-wrap table{min-width:720px}
+/* 单元格里「长文本省略号」的统一 span：截断样式收在这里，宽度上限由行内
+   style 按列给（不同列不同），媒体查询只调上限与折行行为。 */
+.note-clip{display:inline-block;vertical-align:bottom;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+/* 中屏（641–960px）：桌面表格布局还在，但横向空间有限。固定 px 的说明上限
+   在这个区间最挤——一条 429 原文能把「账号」压到贴着「时间」。这里把说明列
+   收到 300px（行内 max-width 优先级更高，须 !important 才盖得住）；表格下限
+   720px 不动，摆不下仍横向滚动，列宽不会被压扁。账号列的 160px 上限不动。 */
+@media (min-width:641px) and (max-width:960px){
+  td[data-label="说明"] .note-clip{max-width:300px!important}
+}
+/* 手机卡片模式（≤640px）：每格独占一行，折行显示全文，不再省略号截断
+   （完整内容本来也在 title 里，但触屏没有 hover，截断了就看不全）。 */
+@media (max-width:640px){
+  table.data-cards .note-clip{white-space:normal;overflow:visible;text-overflow:clip;
+    overflow-wrap:anywhere;word-break:break-word}
+}
+/* 活动表的短标签列（时间/区域/任务/来源/结果）不许逐字折行：表格自动布局
+   里说明列一挤，这些列会被压到一字宽——「国际版每日活跃」变成一字一行的
+   竖条，行高撑到七八行。nowrap 给布局一个真实下限（列至少要放得下标签），
+   宽度不够时整表横向滚动，而不是把标签竖起来；说明列仍是弹性吸收方。 */
+table.activity-table td[data-label="时间"],
+table.activity-table td[data-label="区域"],
+table.activity-table td[data-label="任务"],
+table.activity-table td[data-label="来源"],
+table.activity-table td[data-label="结果"]{white-space:nowrap}
 #recent table th, #recent table td{text-align:center}
 #recent table th:first-child, #recent table td:first-child{text-align:center}
 #recent table td.mono{font-variant-numeric:tabular-nums}
@@ -2632,6 +2658,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '账号当日消费的积分达到该值后，只允许请求免费模型（目录中标记为 x0.00 的模型），需要花费积分的模型自动切到其他账号；本地时间 0 点后自动恢复。填 0 表示关闭（默认）。': 'Once the credit spend of an account for the day reaches this, only free models are allowed (those marked x0.00 in the catalog) and models that cost credits switch to other accounts; it recovers after local midnight. 0 turns it off (default).',
     '账号，之后相关请求都会走该账号': 'account; requests will then go through it',
     '走网页通道': 'use the web channel',
+    '证书失败改走活跃上报': 'report activity when the certificate fails',
     '活跃使用的模型': 'Model for the daily activity',
     '(已指定)': '(set)',
     '（免费 0.00x）': ' (free 0.00x)',
@@ -3031,6 +3058,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "已启用：429 时自动切换出站身份": "已啟用：429 時自動切換出站身份",
     "已启用：余额低于": "已啟用：餘額低於",
     "已启用：国际版打卡走网页通道": "已啟用：國際版打卡走網頁通道",
+    "证书失败改走活跃上报": "憑證失敗改走活躍上報",
     "失败重试": "失敗重試",
     "最多尝试次数": "最多嘗試次數",
     "首轮等待": "首輪等待",
@@ -5154,6 +5182,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
               <input id="setDailyChatWeb" type="checkbox" style="width:16px;height:16px">
               走网页通道
             </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setDailyChatActivityFallback" type="checkbox" style="width:16px;height:16px">
+              证书失败改走活跃上报
+              <em id="setDailyChatActivityFallbackState" style="font-style:normal;font-size:12px;color:var(--dim)"></em>
+            </label>
           </div>
         </div>
 
@@ -5946,7 +5979,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           <option value="7d" selected>近 7 天</option>
           <option value="30d">近 30 天</option>
         </select>
-        <select id="actUid" onchange="setActivityFilter('uid', this.value)" title="账号"></select>
+        <select id="actUid" onchange="setActivityFilter('uid', this.value)" title="账号" style="max-width:180px"></select>
         <select id="actTask" onchange="setActivityFilter('task', this.value)" title="任务">
           <option value="">全部任务</option>
           <option value="checkin">国内签到</option>
@@ -5960,7 +5993,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         <button class="sec" onclick="loadActivityHistory()">刷新</button>
       </div>
       <div class="table-wrap">
-        <table class="data-cards"><thead><tr>
+        <table class="data-cards activity-table"><thead><tr>
           <th>时间</th><th>账号</th><th>任务</th><th>结果</th><th>说明</th>
         </tr></thead><tbody id="activityHistoryRows"></tbody></table>
       </div>
@@ -8405,9 +8438,10 @@ function activityHistoryRow(row){
     +   (row && row.ok ? '<span class="badge ok">成功</span>' : '<span class="badge bad">失败</span>')
     + '</td>'
     // 上游原文可能很长：在 span 上做行内截断（td 自身不吃 max-width），完整
-    // 内容留在 title 里，模态框不会被撑宽。
+    // 内容留在 title 里，模态框不会被撑宽。.note-clip 与账号页活动表共用分档
+    // 上限（中屏 300px），手机上由 640px 断点改折行。
     + '<td data-label="说明" style="text-align:left">'
-    +   '<span style="display:inline-block;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom"'
+    +   '<span class="note-clip" style="max-width:420px"'
     +   ' title="' + esc(message) + '">' + esc(message || '—') + '</span></td>'
     + '</tr>';
 }
@@ -8916,9 +8950,9 @@ function renderActivityBoard(data){
   }
   const resultBadge = ok => ok ? '<span class="badge ok">成功</span>'
                                : '<span class="badge bad">失败</span>';
-  box.innerHTML = '<table class="data-cards"><thead><tr>'
+  box.innerHTML = '<table class="data-cards activity-table"><thead><tr>'
     + '<th style="text-align:left;width:132px">时间</th>'
-    + '<th style="text-align:left">账号</th>'
+    + '<th style="text-align:left;width:11%">账号</th>'
     + '<th style="text-align:center;width:76px">区域</th>'
     + '<th style="text-align:left;width:132px">任务</th>'
     + '<th style="text-align:center;width:76px">来源</th>'
@@ -8928,7 +8962,8 @@ function renderActivityBoard(data){
     + rows.map(r => '<tr>'
         + '<td class="mono" data-label="时间">' + esc(activityTime(r.ts)) + '</td>'
         + '<td data-label="账号" title="' + esc(r.uid || '') + '">'
-          + '<span data-no-i18n>' + esc(activityWho(r)) + '</span></td>'
+          + '<span class="note-clip" style="max-width:160px" title="'
+          + esc(activityWho(r)) + '" data-no-i18n>' + esc(activityWho(r)) + '</span></td>'
         + '<td style="text-align:center" data-label="区域">'
           + esc(ACTIVITY_REALM_LABEL[r.realm] || '—') + '</td>'
         + '<td data-label="任务">' + esc(ACTIVITY_TASK_LABEL[r.task] || r.task || '—') + '</td>'
@@ -8937,9 +8972,11 @@ function renderActivityBoard(data){
         + '<td style="text-align:center" data-label="结果">' + resultBadge(r.ok) + '</td>'
         // 上游原文可能很长：在 span 上做行内截断（td 自身不吃 max-width，撑宽的是
         // 整张表），完整内容留在 title 里，表格不会被一条 429 原文拉出横向滚动。
+        // 上限分档给（.note-clip）：大屏 520px，中屏 641–960px 桌面布局还在但
+        // 宽度有限，收到 300px，免得账号贴着时间；手机卡片模式下改折行显示全文。
         + '<td data-label="说明" style="text-align:left">'
         +   (r.message
-              ? '<span style="display:inline-block;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom" title="' + esc(r.message) + '">' + esc(r.message) + '</span>'
+              ? '<span class="note-clip" style="max-width:520px" title="' + esc(r.message) + '">' + esc(r.message) + '</span>'
               : '<span style="color:var(--dim)">—</span>')
         + '</td>'
         + '</tr>').join('')
@@ -11754,6 +11791,14 @@ async function loadSettings(showToast){
         dailyChatCatchupState.textContent = dailyChatCatchup ? '(已启用)' : '(关闭)';
         dailyChatCatchupState.style.color = dailyChatCatchup ? 'var(--accent2)' : 'var(--dim)';
       }
+      const dailyChatActivityFallback = data.daily_chat_web_fallback_activity === true;
+      const dailyChatActivityFallbackInput = document.getElementById('setDailyChatActivityFallback');
+      if(dailyChatActivityFallbackInput) dailyChatActivityFallbackInput.checked = dailyChatActivityFallback;
+      const dailyChatActivityFallbackState = document.getElementById('setDailyChatActivityFallbackState');
+      if(dailyChatActivityFallbackState){
+        dailyChatActivityFallbackState.textContent = dailyChatActivityFallback ? '(已启用)' : '(关闭)';
+        dailyChatActivityFallbackState.style.color = dailyChatActivityFallback ? 'var(--accent2)' : 'var(--dim)';
+      }
       const dailyWebRandomPrompt = data.daily_chat_web_random_prompt === true;
       const dailyWebRandomPromptInput = document.getElementById('setDailyChatRandomPrompt');
       if(dailyWebRandomPromptInput) dailyWebRandomPromptInput.checked = dailyWebRandomPrompt;
@@ -12803,6 +12848,7 @@ async function saveDailyChatModule(btn){
   const concEl = document.getElementById('setDailyChatWebConcurrency');
   const backoffEl = document.getElementById('setDailyChatWebRetryBackoff');
   const catchupEl = document.getElementById('setDailyChatStartupCatchup');
+  const fallbackEl = document.getElementById('setDailyChatActivityFallback');
   const payload = {
     daily_chat_web: !!(webEl && webEl.checked),
     daily_chat_models: DAILY_CHAT_MODEL_SELECTED.slice(),
@@ -12811,6 +12857,7 @@ async function saveDailyChatModule(btn){
     daily_chat_web_concurrency: Number((concEl && concEl.value) || 1),
     daily_chat_web_retry_backoff: Number((backoffEl && backoffEl.value) || 0),
     daily_chat_startup_catchup: !!(catchupEl && catchupEl.checked),
+    daily_chat_web_fallback_activity: !!(fallbackEl && fallbackEl.checked),
     schedule: {daily_chat: DAILY_CHAT_TIMES_SELECTED.slice()}
   };
   if(btn) btn.disabled = true;
@@ -12834,11 +12881,13 @@ async function resetDailyChatModule(btn){
   const concEl = document.getElementById('setDailyChatWebConcurrency');
   const backoffEl = document.getElementById('setDailyChatWebRetryBackoff');
   const catchupEl = document.getElementById('setDailyChatStartupCatchup');
+  const fallbackEl = document.getElementById('setDailyChatActivityFallback');
   if(budgetEl) budgetEl.value = '600';
   if(turnEl) turnEl.value = '120';
   if(concEl) concEl.value = '1';
   if(backoffEl) backoffEl.value = '5';
   if(catchupEl) catchupEl.checked = true;
+  if(fallbackEl) fallbackEl.checked = false;
   renderDailyChatModelList([]);
   renderDailyChatTimes([]);
   if(btn) btn.disabled = true;
@@ -12850,6 +12899,7 @@ async function resetDailyChatModule(btn){
       daily_chat_web_concurrency: 1,
       daily_chat_web_retry_backoff: 5,
       daily_chat_startup_catchup: true,
+      daily_chat_web_fallback_activity: false,
       schedule: {daily_chat: []}
     });
     toast('已恢复推荐值：随机两个时段、自动候选、预算 600 秒', 'ok');
@@ -17843,10 +17893,18 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
 
     var wrap = document.createElement('span');
     wrap.className = 'cs-wrap';
-    var cs = window.getComputedStyle(sel);
-    if (cs.display === 'block' || cs.width === '100%' || sel.style.width === '100%'){
+    /* 只认控件自己的显式 width:100%：computed display 不可信——flex 容器的
+       子项、以及还藏在 display:none 页签里的 select，计算值都会被规范化成
+       block，曾经因此把工具栏里并排的下拉全部误判成「独占一行」顶成竖排
+       （账号页筛选条、任务页、设置页、历史弹窗、积分包排序都中招）。 */
+    if (sel.style.width === '100%'){
       wrap.classList.add('cs-block');
     }
+    /* 原生控件上的 max-width（.slot-select 的 140px 等）要跟着搬：增强后
+       可见的是触发器而不是 select，不搬的话「全部账号」里一条长昵称就能把
+       工具栏撑歪——上限本来就是给控件定的，不该因为增强而消失。 */
+    var mw = window.getComputedStyle(sel).maxWidth;
+    if (mw && mw !== 'none' && mw !== '0px') wrap.style.maxWidth = mw;
     if (sel.id) wrap.setAttribute('data-for', sel.id);
     sel.parentNode.insertBefore(wrap, sel);
     wrap.appendChild(sel);

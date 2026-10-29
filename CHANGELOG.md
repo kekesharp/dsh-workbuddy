@@ -2,6 +2,15 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
+## 0.6.0 — 2026-10-29
+
+**内置网关 1.7.33 → 1.9.0（上游 `a6a967e`，tag `v1.9.0`）—— 修复 11128 渠道校验**
+
+- 修复 `400 / code 11128 Illegal API invocation from an unapproved channel`：DSH 官方插件 `@deepseek-ai/dsh-file-reference` 注入的 `FILE_REFERENCE_PROMPT` 会被上游判成非官方客户端。v1.9.0 只给该段首句补一个 `that`（`paths the user` → `paths that the user`），打断整段连续匹配，语义不变且幂等；本地验证 `sanitize_text` 命中并保持二次调用不变。
+- 其他同步内容：401 认 `WWW-Authenticate: invalid_token`（国内版 APISIX HTML 401）、国内版 6004 配额耗尽写入 `model_windows.json` 跨重启恢复、`/health` 按区域与模型细分、池空 503/429 精准归因 + `Retry-After`、国际版每日活跃 11140 持久化避让、可选 `WB_DESKTOP_CHAT_COMPAT=1`、SSE 心跳与零费率模型豁免。
+- 模块集不变（30 个 `wb_*.py`），`--host/--port/--accounts-dir/--usage-dir/--panel-password`、`/health`、`/panel/login`、`/realm`、`?pwd=` 面板登录均保持兼容。
+- 上游仍处于低频维护，README 保留风控收紧与责任提示，并新增 11128 排错条目。
+
 ## 0.5.0 — 2026-10-24
 
 **内置网关 1.7.17 → 1.7.33（上游 `47775c5`，tag `v1.7.33`）**

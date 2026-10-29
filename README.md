@@ -3,7 +3,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/kekesharp/dsh-workbuddy?label=stars&color=176BFF)](https://github.com/kekesharp/dsh-workbuddy/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-blue)](https://github.com/deepseek-ai)
-[![Gateway](https://img.shields.io/badge/gateway-1.7.33-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
+[![Gateway](https://img.shields.io/badge/gateway-1.9.0-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#前置条件)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](#前置条件)
 
@@ -134,9 +134,9 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 ## 内置网关与生命周期
 
-网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v1.7.33**，约 3.2 MB），不需要另外安装。
+网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v1.9.0**，约 3.2 MB），不需要另外安装。
 
-> ⚠️ 上游自 **v1.7.33（2026-10-23）起进入低频维护**，并提示 WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
+> ⚠️ 上游自 v1.7.33（2026-10-23）起进入低频维护，v1.9.0 仍在跟进 11128 等渠道指纹；WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
 
 ### 随 DSH 启停
 
@@ -168,19 +168,18 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 内置模式下插件直接 `python3 wb_proxy.py`，参数带 `--port` / `--accounts-dir` / `--usage-dir` / `--panel-password` —— **不经过任何 shell 启动脚本**，所以没有 CRLF、PATH、终端挂起之类的问题。运行时产生的目录归档（`catalog/`）也被 `WB_PROXY_CATALOG_DIR` 指到数据目录，插件升级时不会丢，也不会往代码目录里写东西。
 
-### 这次同步回来的上游能力（1.6.19 → 1.7.33）
+### 这次同步回来的上游能力（1.6.19 → 1.9.0）
 
-内置网关整体替换为上游 **v1.7.33**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.7.17 到 1.7.33 的十六个版本主要带来：
+内置网关整体替换为上游 **v1.9.0**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.7.33 到 1.9.0 主要带来：
 
-- **流式断流不再伪造 `[DONE]`**：读 body 中途失败会发标准 error 帧并关闭连接，客户端不会再拿半截答案当完整回复
-- **模型级 5xx 不熔断整池**，且 **429 模型窗口跨重启恢复**：冷却状态会随 `model_windows.json` 落盘，重启不会把所有模型重新撞一遍
-- **静态 API Key 账号**：企业微信认证的 WorkBuddy / CodeBuddy CLI 账号可只用 `ck_...` 入池，免 refreshToken
-- **账号独立「任务开关」**：`enabled` 只管 API 取号，签到 / 成长任务 / 猫猫旅行 / 每日活跃由 `tasksEnabled` 单独控制
-- **账号级并发上限 + 会话粘滞**（默认关）与**跨出口回退**（国际版整池限流时重放到国内版，默认关）
-- **每日活跃改为预算 + 有序模型候选**，网页会话跑完即释放，避免撞上单账号 10 条会话上限
-- **身份句指纹清洗扩展**：`You are … powered by …` 一类句式扩到 7 种动词，作用域补上 assistant，避免 11-128
-- **思考档位映射、Pro Only 由目录 tier 驱动、`/v1/models` 可用性标注**，以及面板的版本回退 / 一键更新（内置模式用不到更新入口）
-- **按账号定址路由**：`/u/<uid|uid前8位|昵称>/v1/...`，需要固定某个账号时不用再猜
+- **中和 DSH 文件引用段的 11128 渠道指纹**：官方插件 `@deepseek-ai/dsh-file-reference` 注入的 `FILE_REFERENCE_PROMPT` 会被上游判成「非官方客户端」，返回 `400 / code 11128 Illegal API invocation from an unapproved channel`；网关现在只给该段首句补一个 `that`（语义不变、幂等），整段不再连续命中。**这就是本次报错的直接修复**
+- **401 判定认 `WWW-Authenticate: invalid_token`**：国内版 APISIX 返回 HTML 401 时，真失效的凭证不会再被当成代理页放过
+- **国内版 6004 配额耗尽跨重启持久化**：写入 `accounts/model_windows.json`，重启后仍按「配额耗尽」而不是普通 429 处理
+- **`/health` 按区域与模型细分**：新增 `accounts_by_realm`、`models_ready` 等字段，池空原因更清楚
+- **池空报错区分 503 / 429**：仅等模型冷却时返回 429 + `Retry-After`，避免客户端高频空转
+- **国际版每日活跃遇 11140 持久化避让**：限制期内调度器自动跳过，不重复撞墙
+- **可选 `WB_DESKTOP_CHAT_COMPAT=1`**：桌面 chat 去掉浏览器头、补齐 SDK 元数据（默认关闭，改后需重启网关）
+- **流式 SSE 心跳、零费率模型不被保留积分误伤、Codex 远程压缩 v2** 等协议与调度修复
 
 > 升级只替换 `vendor/wb-proxy` 的代码与 `dashboard.html` / `pricing.json`；账号、用量、设置都在数据目录，不受影响。
 
@@ -197,7 +196,7 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 ```
 ✅ mode             vendored
 ✅ vendorGateway    /…/vendor/wb-proxy
-ℹ️ gatewayVersion   v1.7.33
+ℹ️ gatewayVersion   v1.9.0
 —  externalGateway              ← 当前模式不适用
 ✅ python           python3
 ✅ dataDir          /…/workbuddy-gateway
@@ -274,6 +273,7 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 | 长会话报 `context overflow` | 模型没写 `contextWindow`，pi-ai 回退到约 256K 兜底 → 补上真实窗口 |
 | 图片被拒 | 模型/路由缺 `input: [text, image]` |
 | 模型报 `TRANSPORT` 错误 | 网关挂了。等看门狗自愈（约 30 秒）后重试；或跑 `/workbuddy/diagnose` |
+| 请求报 `400 / code 11128 Illegal API invocation from an unapproved channel` | 渠道指纹被拦。升级插件到 **0.6.0+**（内置网关 1.9.0 已中和 DSH 文件引用段的指纹）；仍出现说明上游新增了别的指纹，只能等上游跟进 |
 | 聊到一半报 `RATE_LIMIT` / 链接中断 | WorkBuddy 429 冷却约 60 秒，provider 没配 `retryPolicy` → 按「安装 第 2 步」补上（约 2 分半的重试预算） |
 | 「启动网关」报 `port is already in use` | 端口被占。多半是终端里起过、关终端后被 `SIGTTOU` 挂起（`STAT=T`）的僵尸，见下 |
 | 面板提示「无法连接反代」/ 添加账号 405 | 做了路径前缀反代。必须让 iframe **直连** `gatewayUrl`（见「实现约束 1」） |
@@ -328,7 +328,7 @@ window.__ModuleLoader__.load({ id: 'dsh-workbuddy', factory })
 | [Axiaohungry/dsh-llm-workbuddy](https://github.com/Axiaohungry/dsh-llm-workbuddy) | 56 | API Key 接模型 | 只做 provider，无面板 |
 | [tearslee/dsh-workbuddy2api](https://github.com/tearslee/dsh-workbuddy2api) | 4 | 守护网关 + 自动注册 provider | 无面板 |
 | [Wei894348/dsh-wb2api](https://github.com/Wei894348/dsh-wb2api) | 0 | 自建网关 + 面板 | 更重：自己实现网关 |
-| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 2863 | 网关本体 | 本插件内置的就是它（v1.7.33） |
+| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 3159 | 网关本体 | 本插件内置的就是它（v1.9.0） |
 
 **本插件的定位**：不重造网关，把网关**打进来**并管好生命周期，同时把官方面板嵌进 DSH。
 
