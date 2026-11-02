@@ -3,7 +3,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/kekesharp/dsh-workbuddy?label=stars&color=176BFF)](https://github.com/kekesharp/dsh-workbuddy/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-blue)](https://github.com/deepseek-ai)
-[![Gateway](https://img.shields.io/badge/gateway-1.9.0-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
+[![Gateway](https://img.shields.io/badge/gateway-1.10.1-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#前置条件)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](#前置条件)
 
@@ -134,9 +134,9 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 ## 内置网关与生命周期
 
-网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v1.9.0**，约 3.2 MB），不需要另外安装。
+网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v1.10.1**，约 3.3 MB），不需要另外安装。
 
-> ⚠️ 上游自 v1.7.33（2026-10-23）起进入低频维护，v1.9.0 仍在跟进 11128 等渠道指纹；WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
+> ⚠️ 上游自 v1.7.33（2026-10-23）起进入低频维护（v1.10.1 仍在更新），并持续跟进 11128 等渠道指纹；WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
 
 ### 随 DSH 启停
 
@@ -168,18 +168,17 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 内置模式下插件直接 `python3 wb_proxy.py`，参数带 `--port` / `--accounts-dir` / `--usage-dir` / `--panel-password` —— **不经过任何 shell 启动脚本**，所以没有 CRLF、PATH、终端挂起之类的问题。运行时产生的目录归档（`catalog/`）也被 `WB_PROXY_CATALOG_DIR` 指到数据目录，插件升级时不会丢，也不会往代码目录里写东西。
 
-### 这次同步回来的上游能力（1.6.19 → 1.9.0）
+### 这次同步回来的上游能力（1.6.19 → 1.10.1）
 
-内置网关整体替换为上游 **v1.9.0**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.7.33 到 1.9.0 主要带来：
+内置网关整体替换为上游 **v1.10.1**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.9.0 到 1.10.1 主要带来：
 
-- **中和 DSH 文件引用段的 11128 渠道指纹**：官方插件 `@deepseek-ai/dsh-file-reference` 注入的 `FILE_REFERENCE_PROMPT` 会被上游判成「非官方客户端」，返回 `400 / code 11128 Illegal API invocation from an unapproved channel`；网关现在只给该段首句补一个 `that`（语义不变、幂等），整段不再连续命中。**这就是本次报错的直接修复**
-- **401 判定认 `WWW-Authenticate: invalid_token`**：国内版 APISIX 返回 HTML 401 时，真失效的凭证不会再被当成代理页放过
-- **国内版 6004 配额耗尽跨重启持久化**：写入 `accounts/model_windows.json`，重启后仍按「配额耗尽」而不是普通 429 处理
-- **`/health` 按区域与模型细分**：新增 `accounts_by_realm`、`models_ready` 等字段，池空原因更清楚
-- **池空报错区分 503 / 429**：仅等模型冷却时返回 429 + `Retry-After`，避免客户端高频空转
-- **国际版每日活跃遇 11140 持久化避让**：限制期内调度器自动跳过，不重复撞墙
-- **可选 `WB_DESKTOP_CHAT_COMPAT=1`**：桌面 chat 去掉浏览器头、补齐 SDK 元数据（默认关闭，改后需重启网关）
-- **流式 SSE 心跳、零费率模型不被保留积分误伤、Codex 远程压缩 v2** 等协议与调度修复
+- **CodeArts 原生第三出口**（默认关闭）：新增 `codearts` 区域，可在面板「国际版 / 国内版 / CodeArts」间切换；OAuth2 PKCE + DPoP、token 续期、账号池与模型发现都在进程内完成，不再需要单独跑 codearts2api。新增 `wb_codearts` / `wb_codearts_crypto` 两个模块
+- **429 响应带绝对恢复时刻**：`X-RateLimit-Reset`（epoch 秒）、`X-RateLimit-Reset-At`（ISO-8601）与正文 `reset_at`，多进程 / 分布式客户端不再各自漂移
+- **工具名归一化**：自动过滤不符合 `^[A-Za-z0-9_-]{1,64}$` 的 `function.name`，修复上游 `400 / 11133`
+- **CodeArts 会话上限修复**：补 `x-ot-session-id` / `user-session-id` / 每次请求随机的 `x-ot-trace-id`，不再被误判并发建会话
+- **账号代理槽支持认证代理**：`http://user:pass@host:port`，并自动规整 `host:port:user:pass` / 缺 scheme 的写法
+- **请求体上限面板可调**（1–256 MB，热生效）；**SSE 终态停止读取**（`WB_STOP_AT_SSE_DONE=1`）与 **HTTP 错误正文缓存**（`WB_CACHE_HTTP_ERROR_BODY=1`）两个可选开关
+- **11128 文件引用段指纹中和继续保留**：`FILE_REFERENCE_PROMPT` 首句补 `that`，此前修好的 `11128 unapproved channel` 不会回退
 
 > 升级只替换 `vendor/wb-proxy` 的代码与 `dashboard.html` / `pricing.json`；账号、用量、设置都在数据目录，不受影响。
 
@@ -196,7 +195,7 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 ```
 ✅ mode             vendored
 ✅ vendorGateway    /…/vendor/wb-proxy
-ℹ️ gatewayVersion   v1.9.0
+ℹ️ gatewayVersion   v1.10.1
 —  externalGateway              ← 当前模式不适用
 ✅ python           python3
 ✅ dataDir          /…/workbuddy-gateway
@@ -273,7 +272,7 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 | 长会话报 `context overflow` | 模型没写 `contextWindow`，pi-ai 回退到约 256K 兜底 → 补上真实窗口 |
 | 图片被拒 | 模型/路由缺 `input: [text, image]` |
 | 模型报 `TRANSPORT` 错误 | 网关挂了。等看门狗自愈（约 30 秒）后重试；或跑 `/workbuddy/diagnose` |
-| 请求报 `400 / code 11128 Illegal API invocation from an unapproved channel` | 渠道指纹被拦。升级插件到 **0.6.0+**（内置网关 1.9.0 已中和 DSH 文件引用段的指纹）；仍出现说明上游新增了别的指纹，只能等上游跟进 |
+| 请求报 `400 / code 11128 Illegal API invocation from an unapproved channel` | 渠道指纹被拦。升级插件到 **0.7.0+**（内置网关 1.10.1 已中和 DSH 文件引用段的指纹）；仍出现说明上游新增了别的指纹，只能等上游跟进 |
 | 聊到一半报 `RATE_LIMIT` / 链接中断 | WorkBuddy 429 冷却约 60 秒，provider 没配 `retryPolicy` → 按「安装 第 2 步」补上（约 2 分半的重试预算） |
 | 「启动网关」报 `port is already in use` | 端口被占。多半是终端里起过、关终端后被 `SIGTTOU` 挂起（`STAT=T`）的僵尸，见下 |
 | 面板提示「无法连接反代」/ 添加账号 405 | 做了路径前缀反代。必须让 iframe **直连** `gatewayUrl`（见「实现约束 1」） |
@@ -328,7 +327,7 @@ window.__ModuleLoader__.load({ id: 'dsh-workbuddy', factory })
 | [Axiaohungry/dsh-llm-workbuddy](https://github.com/Axiaohungry/dsh-llm-workbuddy) | 56 | API Key 接模型 | 只做 provider，无面板 |
 | [tearslee/dsh-workbuddy2api](https://github.com/tearslee/dsh-workbuddy2api) | 4 | 守护网关 + 自动注册 provider | 无面板 |
 | [Wei894348/dsh-wb2api](https://github.com/Wei894348/dsh-wb2api) | 0 | 自建网关 + 面板 | 更重：自己实现网关 |
-| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 3159 | 网关本体 | 本插件内置的就是它（v1.9.0） |
+| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 3159 | 网关本体 | 本插件内置的就是它（v1.10.1） |
 
 **本插件的定位**：不重造网关，把网关**打进来**并管好生命周期，同时把官方面板嵌进 DSH。
 

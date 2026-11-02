@@ -2,6 +2,17 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
+## 0.7.0 — 2026-11-02
+
+**内置网关 1.9.0 → 1.10.1（上游 `28527f4`，tag `v1.10.1`）**
+
+- 整体替换 `vendor/wb-proxy` 的 `wb_*.py`、`dashboard.html`、`pricing/pricing.json`，与上游同版本逐字节一致（行尾统一 CRLF）。
+- 新增模块 `wb_codearts` / `wb_codearts_crypto`：CodeArts 原生第三出口（默认关闭），面板可在国际版 / 国内版 / CodeArts 之间切换；OAuth2 PKCE + DPoP、token 续期、账号池与模型发现都在网关进程内完成。
+- 429 响应新增 `X-RateLimit-Reset` / `X-RateLimit-Reset-At` 与正文 `reset_at`；工具名归一化过滤非法 `function.name`（修 11133）；CodeArts 会话上限与排队修复；代理槽支持 `user:pass` 认证与格式规整。
+- 请求体上限可在面板动态调节（1–256 MB）；新增可选 `WB_STOP_AT_SSE_DONE=1` 与 `WB_CACHE_HTTP_ERROR_BODY=1`。
+- 11128 文件引用段（`@deepseek-ai/dsh-file-reference`）指纹中和继续保留，之前修好的 `unapproved channel` 不会回退。
+- 启动契约不变：`--host/--port/--accounts-dir/--usage-dir/--panel-password`、`/health`、`/panel/login`、`/realm`、`?pwd=` 均兼容；`/health` 新增 `crypto_ok`、`codearts` 等子字段。
+
 ## 0.6.0 — 2026-10-29
 
 **内置网关 1.7.33 → 1.9.0（上游 `a6a967e`，tag `v1.9.0`）—— 修复 11128 渠道校验**

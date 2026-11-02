@@ -1,14 +1,14 @@
 {
   "project": "workbuddy2api-hub",
   "repo": "https://github.com/ardeyouxipianyi/workbuddy2api-hub",
-  "tag": "v1.9.0",
-  "commit": "a6a967ef04b9824e962c4f285ebd589fbb1f1312",
-  "synced_at": "2026-10-29",
+  "tag": "v1.10.1",
+  "commit": "28527f48cfaea0e456612eb8922cb51b5d804a22",
+  "synced_at": "2026-11-02",
   "layout": "upstream repo root",
   "files": [
     "dashboard.html",
     "pricing/pricing.json",
     "wb_*.py"
   ],
-  "note": "与上游同版本文件逐字节一致（仅行尾统一为 CRLF）。升级时整体替换这些文件，并更新本文件的 tag/commit/synced_at。v1.9.0 起包含 DSH 文件引用段（@deepseek-ai/dsh-file-reference）的 11128 渠道指纹中和；上游仍处于低频维护。"
+  "note": "与上游同版本文件逐字节一致（仅行尾统一为 CRLF）。升级时整体替换这些文件，并更新本文件的 tag/commit/synced_at。v1.9.0 起包含 DSH 文件引用段（@deepseek-ai/dsh-file-reference）的 11128 渠道指纹中和；v1.10.x 新增 CodeArts 第三出口（默认关闭）。"
 }
