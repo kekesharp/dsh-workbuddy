@@ -2,6 +2,17 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
+## 0.8.0 — 2026-11-03
+
+**内置网关 1.10.1 → 1.10.7（上游 `d177043`，tag `v1.10.7`）**
+
+- 整体替换 `vendor/wb-proxy` 的 `wb_*.py`、`dashboard.html`、`pricing/pricing.json`，与上游同版本逐字节一致（行尾统一 CRLF）。
+- 新增 `wb_media` / `wb_media_client` / `wb_media_tasks`：生图 / 图生图 / 异步生视频（默认关闭），本地排队与按分辨率计价。
+- 新增 `wb_usage_io`：usage 日志并发原子追加（Windows 文件锁 + POSIX `O_APPEND`）。
+- 国内版 `deepseek-v4.1-flash` 计费与出站修正：不再误标免费、不再误走 `-sg`；国际版恢复原生免费通道，`WB_DEEPSEEK_FLASH_FORCE_SG` 可切付费通道。
+- CodeArts 每日签到按活动类型识别，支持可选自动签到（默认关）。
+- 11-128 文件引用段指纹中和继续保留；启动契约不变（`/health` 新增 `crypto_ok` / `codearts` / `models_ready` 等子字段）。
+
 ## 0.7.0 — 2026-11-02
 
 **内置网关 1.9.0 → 1.10.1（上游 `28527f4`，tag `v1.10.1`）**
