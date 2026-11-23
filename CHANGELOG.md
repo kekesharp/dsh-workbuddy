@@ -2,6 +2,31 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
+## 未发布
+
+**自愈升级：认得「网关活着但出网已死」**
+
+- 新增 `logWatch`（默认开）：每轮健康检查增量扫网关日志，命中 DNS/解析失败特征（`local network looks down`、`nodename nor servname provided`、`Temporary failure in name resolution` 等）就记一条证据，窗口内累计满 `logWatchStreak`（默认 2 条）自动重启网关。只扫本次 DSH 启动之后的新日志，不把上一轮故障的旧行算进来。
+- 新增 `watchdogCooldownMaxMs`（默认 10 分钟）：自愈重启改为指数退避，重启后连续 4 个干净周期才清零。
+- 修复并发自杀：看门狗、面板按钮、启动探测同时进来时，`startGateway` 会把「刚 spawn、还在 bind」的自己人当成占端口的僵尸 `SIGKILL` 掉（表现为日志里刚「已启动」就 `signal=SIGKILL`）。现在生命周期操作串成一条链串行化，且自己的子进程一律等就绪、不当僵尸清。
+- 崩溃后必须能自愈：进程不在、也没有托管对象时，自愈改为直接拉起（此前会判「不由本插件托管」而跳过），外部启动的网关仍然一律不碰。
+- 新路由 `POST /workbuddy/gateway/restart`；`/workbuddy/diagnose?deep=1` 会真发一次 1-token 对话，把结果写进 `checks.outbound`；`/workbuddy/status` 新增 `selfHeal`（`count` / `backoffMs` / `last` / `logWatch`）便于确认自愈是否真的跑过。
+- 看门狗 tick 全包 try/catch：单轮异常不再可能带崩 DSH 宿主进程。
+- 背景故障：2026-11-09 DSH 更新到 0.2.2-rc.1 时系统代理切换，把长寿命网关进程的 resolver 卡死，`/health` 仍 200、所有模型请求卡 126 秒后 503 `URLError: [Errno 8]`；旧看门狗只探 `/health`，永远不重启。
+
+## 0.9.0 — 2026-11-07
+
+**内置网关 1.10.7 → 2.0.0（上游 `d234396`，tag `v2.0.0`，上游最终版）**
+
+- 整体替换 `vendor/wb-proxy` 的 `wb_*.py`、`dashboard.html`、`pricing/pricing.json`，与上游同版本逐字节一致（行尾统一 CRLF）。
+- ⚠️ 上游已于 2026-11-06 宣布**停止维护**，v2.0.0 为最后一个版本；后续渠道指纹变化不再有上游跟进。
+- CodeArts 出口工具归一化（修 `Tool function cannot empty`）：空 `function`、裸服务端工具、扁平声明统一转合规 function schema，`parameters` 缺失自动补 `{"type":"object","properties":{}}`，全部不可用时移除 `tools`/`tool_choice`。
+- CodeArts 配置保存加锁（读-改-写原子化）、账号备注 / 任务开关 / 积分刷新 / 签到与令牌保活调度；支持图片输入与模型视觉能力；修复 OpenAI 格式错误响应丢失 429 状态码。
+- 面板：默认控制台布局 + Alibaba 配色，新增可选新导航布局与「保持登录」；设置页分组在正體中文 / 英文下不再整页隐藏。
+- 稳定性：413 响应不再被连接重置吞掉；参数类错误返回 400 且不冷却账号池；小账号池长会话固定同号（保住前缀缓存）；`x0.00` 免费倍率不再覆盖付费价；CodeArts 模型 ID 精确匹配（`deepseek-v4.1-flash` ≠ `-1017`）。
+- 用量聚合缓存改异步补写（30s 起指数退避、封顶 15 分钟）+ 64MB 落后告警 + 按 pid 隔离临时文件；日志轮转日限校验；新增出站身份诊断工具。
+- 启动契约不变：`--host/--port/--accounts-dir/--usage-dir/--panel-password`、`/health`、`/panel/login`、`/realm`、`?pwd=` 全部兼容。
+
 ## 0.8.0 — 2026-11-03
 
 **内置网关 1.10.1 → 1.10.7（上游 `d177043`，tag `v1.10.7`）**
