@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({
           <span class="dsh-wb-grow" id="dsh-wb-bar-status"></span>
           <button id="dsh-wb-btn-start" type="button">启动网关</button>
           <button id="dsh-wb-btn-stop" type="button">停止网关</button>
+          <button id="dsh-wb-btn-restart" type="button" title="进程活着但连不上上游时点这里">重启网关</button>
           <button id="dsh-wb-btn-realm" type="button">切换区域</button>
           <button id="dsh-wb-btn-reload" type="button">刷新</button>
           <button id="dsh-wb-btn-ext" type="button">新窗口打开</button>
@@ -267,6 +268,32 @@ window.__ModuleLoader__.load({
             window.alert('网关停止失败：' + String(err?.message ?? err))
           } finally {
             btn.textContent = '停止网关'
+            await poll()
+          }
+        })
+
+        // 重启：进程活着但出网已死（DNS 卡住，模型全 503、每次卡两分钟）时最有用。
+        // 看门狗也会自愈，但排障时手动一下更快，还能立刻看到结果。
+        $('dsh-wb-btn-restart').addEventListener('click', async () => {
+          const btn = $('dsh-wb-btn-restart')
+          btn.disabled = true
+          btn.textContent = '重启中…'
+          try {
+            const r = await fetch(API + '/gateway/restart', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+            })
+            const d = await r.json().catch(() => ({}))
+            if (!d?.ok && !d?.up) {
+              const parts = [d?.reason ?? d?.error ?? `HTTP ${r.status}`]
+              if (d?.logTail) parts.push('\n\n── 网关日志（末几行）──\n' + d.logTail)
+              window.alert('网关重启失败：' + parts.join('\n'))
+            }
+          } catch (err) {
+            window.alert('网关重启失败：' + String(err?.message ?? err))
+          } finally {
+            btn.textContent = '重启网关'
             await poll()
           }
         })

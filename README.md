@@ -3,7 +3,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/kekesharp/dsh-workbuddy?label=stars&color=176BFF)](https://github.com/kekesharp/dsh-workbuddy/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-blue)](https://github.com/deepseek-ai)
-[![Gateway](https://img.shields.io/badge/gateway-1.10.7-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
+[![Gateway](https://img.shields.io/badge/gateway-2.0.0-FF6B35)](https://github.com/ardeyouxipianyi/workbuddy2api-hub)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#前置条件)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](#前置条件)
 
@@ -134,9 +134,9 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 ## 内置网关与生命周期
 
-网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v1.10.7**，约 3.6 MB），不需要另外安装。
+网关（`workbuddy2api` 系）**已经打包在插件里**（`vendor/wb-proxy`，对应上游 **v2.0.0**，约 3.6 MB），不需要另外安装。
 
-> ⚠️ 上游自 v1.7.33（2026-10-23）起进入低频维护（v1.10.7 仍在更新），并持续跟进 11128 等渠道指纹；WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
+> ⚠️ **上游已于 2026-11-06 停止维护**（`workbuddy2api-hub` 的最终版本即 v2.0.0，本插件已同步到该版本）。此后上游不再跟进渠道指纹与接口变化，WorkBuddy 对非官方客户端的识别与拦截持续收紧，可能随时彻底不可用。账号风控 / 限流 / 封禁风险由使用者自行承担；请优先使用官方客户端，不要使用主账号或商业转售。
 
 ### 随 DSH 启停
 
@@ -144,9 +144,20 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 - **随 DSH 停止**：`stopOnExit: true` 时 DSH 退出会停掉由本插件启动/接管的网关（SIGTERM → `stopGraceMs` → SIGKILL）
 - **不碰别人的进程**：如果端口上跑的是你自己起的网关，插件只探测、不接管，退出时也不去停它
 - **挂了会自愈**：`watchdog: true`（默认）时，健康检查发现网关**连续两次**不可达就自动重拉，中断窗口约 30 秒
+- **活着但连不上上游也会自愈**：网关进程可能还占着端口、`/health` 也照样 200，可它自己的 DNS/出网已经死了（上游请求一律卡两分钟再 503 `Errno 8`）。这种「半死」状态看门狗会从网关日志里认出来，同样自动重拉
 
 > 判定用「连续两次」而不是单次，是为了避免上游一时卡顿就误重启、反而打断健康的网关。
 > 两次重启之间有 `watchdogCooldownMs`（默认 30 秒）冷却，防止拉起风暴。
+
+**出网自愈是怎么认的**（`logWatch`，默认开）：每轮健康检查顺带增量扫一遍网关日志，命中
+`local network looks down` / `nodename nor servname provided` / `Temporary failure in name resolution`
+这类解析失败特征就记一条证据；`logWatchWindowMs`（默认 10 分钟）窗口内累计满 `logWatchStreak`
+（默认 2 条）才重启——单条抖动不动进程。只扫本次 DSH 启动之后新写入的日志，因此不会把上一次
+故障的旧行当成本次证据。
+
+> 背景：2026-11-09 DSH 更新到 0.2.2-rc.1 那次，系统代理切换把这个长寿命网关进程的 resolver 卡死，
+> `/health` 一直 200、模型侧却全线 503。只看 `/health` 的看门狗永远发现不了，只能手点重启。
+> 现在的自愈覆盖了这种情况，重启后指数退避（`watchdogCooldownMaxMs` 封顶）避免风暴。
 
 ### 代码目录与数据目录分离
 
@@ -168,16 +179,17 @@ bundle 层是启动时加载的。重启后右下角出现图标即成功。
 
 内置模式下插件直接 `python3 wb_proxy.py`，参数带 `--port` / `--accounts-dir` / `--usage-dir` / `--panel-password` —— **不经过任何 shell 启动脚本**，所以没有 CRLF、PATH、终端挂起之类的问题。运行时产生的目录归档（`catalog/`）也被 `WB_PROXY_CATALOG_DIR` 指到数据目录，插件升级时不会丢，也不会往代码目录里写东西。
 
-### 这次同步回来的上游能力（1.6.19 → 1.10.7）
+### 这次同步回来的上游能力（1.10.7 → 2.0.0）
 
-内置网关整体替换为上游 **v1.10.7**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.9.0 到 1.10.7 主要带来：
+内置网关整体替换为上游 **v2.0.0**（`vendor/wb-proxy/UPSTREAM.json` 记录了 tag / commit）。从 1.10.7 到 2.0.0 主要带来：
 
-- **生图 / 生视频媒体能力**（默认关闭）：新增 `POST /v1/images/generations`、`/v1/images/edits`（混元）与异步 `POST /v1/videos`（MiniMax / Kling，支持 `?wait=1`）；本地排队、按分辨率与素材计价、参考素材预签名转存。新增 `wb_media` / `wb_media_client` / `wb_media_tasks`
-- **国内版 `deepseek-v4.1-flash` 计费与出站修正**：不再误标成「免费 0.00x」，也不会被强制改写成本土目录不存在的 `-sg` 而 400；国际版则恢复原生免费通道，可用 `WB_DEEPSEEK_FLASH_FORCE_SG` 切到付费 `-sg`
-- **CodeArts 每日签到按活动类型识别**（不再硬编码 campaignId），并支持可选的惰性自动签到（默认关）
-- **429 响应带绝对恢复时刻**（`X-RateLimit-Reset` / `reset_at`）；**工具名归一化**过滤非法 `function.name`（修 11133）；代理槽支持 `user:pass` 认证
-- **并发日志原子追加加固**（`wb_usage_io`）：Windows 文件锁 + POSIX `O_APPEND`，高并发下不再断行丢行
-- **请求体上限面板可调**（1–256 MB）；可选 `WB_STOP_AT_SSE_DONE=1`、`WB_CACHE_HTTP_ERROR_BODY=1`
+- **CodeArts 出口工具归一化**（修 `Tool function cannot empty` / #750、#752）：空 `function`、裸服务端工具（`{"type":"web_search"}`）、扁平声明统一转成合规 function schema；缺失的 `parameters` 自动补 `{"type":"object","properties":{}}`；全部不可用时从请求体里移除 `tools` 与 `tool_choice`
+- **CodeArts 账号与调度增强**：配置保存读-改-写加锁（并发安全 / #751）、账号 UID 注入防护（#757）、账号备注 / 任务开关 / 积分刷新 / 签到与令牌保活调度；关闭账号任务后不再被排队或惰性签到触发（#759、#762）
+- **CodeArts 模型与请求**：支持图片输入与模型视觉能力，校验推理档位并转发采样参数；修复 OpenAI 格式错误响应中 429 状态码丢失（#758、#760、#761）；模型 ID 精确匹配（`deepseek-v4.1-flash` 与 `-1017` 不再互换 / #797）
+- **请求健壮性**：413 先回响应再排空上传，不再被连接重置吞掉（#799）；`max_tokens` / `max_completion_tokens` 按目录上限收敛、字符串 `stop` 归一化，参数类错误返回 400 且**不再冷却账号池**（#794）；小账号池长会话固定同一账号，保住前缀缓存（#718）
+- **面板**：默认控制台布局 + Alibaba 配色，新增可选新导航布局（桌面侧栏 / 移动端导航 / 分组设置 / #725、#764、#765）、可选「保持登录」（#763）；设置页分组在正體中文 / 英文下不再整页隐藏（#804）
+- **计费与用量**：`x0.00` 免费倍率不再覆盖已知付费价（#774）；DeepSeek Flash 真实计费校准（#753/#754）；用量聚合缓存改异步补写（30s 起指数退避、封顶 15 分钟）+ 64MB 落后告警 + 按 pid 隔离临时文件（#805）
+- **提示词与诊断**：恢复被改坏的 `Main branch` / `To give feedback` 改写规则并加回归护栏（#796）；日志轮转日限校验（#755）；新增出站身份诊断工具（#756）
 - **11-128 文件引用段指纹中和继续保留**：`FILE_REFERENCE_PROMPT` 首句补 `that`，此前修好的 `unapproved channel` 不会回退
 
 > 升级只替换 `vendor/wb-proxy` 的代码与 `dashboard.html` / `pricing.json`；账号、用量、设置都在数据目录，不受影响。
@@ -195,7 +207,7 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 ```
 ✅ mode             vendored
 ✅ vendorGateway    /…/vendor/wb-proxy
-ℹ️ gatewayVersion   v1.10.7
+ℹ️ gatewayVersion   v2.0.0
 —  externalGateway              ← 当前模式不适用
 ✅ python           python3
 ✅ dataDir          /…/workbuddy-gateway
@@ -226,7 +238,11 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 | `autoStart` | `true` | DSH 启动时未运行则拉起 |
 | `stopOnExit` | `true` | DSH 退出时停止（仅限本插件托管的） |
 | `watchdog` | `true` | 网关挂了自动重拉 |
-| `watchdogCooldownMs` | `30000` | 两次自愈重启最小间隔 |
+| `watchdogCooldownMs` | `30000` | 两次自愈重启最小间隔（失败后指数退避） |
+| `watchdogCooldownMaxMs` | `600000` | 退避封顶 |
+| `logWatch` | `true` | 扫网关日志识别「活着但出网已死」 |
+| `logWatchStreak` | `2` | 窗口内累计几条出网故障证据才重启 |
+| `logWatchWindowMs` | `600000` | 出网故障证据的有效窗口 |
 | `gatewayUrl` | `http://127.0.0.1:8788` | 面板 iframe 与 `/health` 探测都用它 |
 | `gatewayPort` | `8788` | 须与 `gatewayUrl` 端口一致 |
 | `dataDir` | `~/.dsh/workbuddy-gateway` | accounts / usage / catalog / 日志 / pidfile |
@@ -253,9 +269,10 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/workbuddy/status` | 可达性 + `/health`，含 `mode` / `gatewayVersion` / `python` / `dataDir` / `managed` / `stopOnExit` |
-| GET | `/workbuddy/diagnose` | **一键自检**，逐项 + `hints` |
+| GET | `/workbuddy/diagnose` | **一键自检**，逐项 + `hints`；`?deep=1` 额外真发一次 1-token 对话验证出网 |
 | POST | `/workbuddy/gateway/start` | 拉起并轮询等就绪；失败返回 `logTail` |
 | POST | `/workbuddy/gateway/stop` | 停止本插件托管的网关 |
+| POST | `/workbuddy/gateway/restart` | 重启本插件托管的网关（面板「重启网关」按钮也走它） |
 | GET | `/workbuddy/models` | 代理网关 `/v1/models` |
 | GET / POST | `/workbuddy/realm` | 查看 / 切换上游出口 `{"realm":"cn"\|"intl"}` |
 
@@ -272,7 +289,8 @@ curl -s http://127.0.0.1:19387/workbuddy/diagnose | python3 -m json.tool
 | 长会话报 `context overflow` | 模型没写 `contextWindow`，pi-ai 回退到约 256K 兜底 → 补上真实窗口 |
 | 图片被拒 | 模型/路由缺 `input: [text, image]` |
 | 模型报 `TRANSPORT` 错误 | 网关挂了。等看门狗自愈（约 30 秒）后重试；或跑 `/workbuddy/diagnose` |
-| 请求报 `400 / code 11128 Illegal API invocation from an unapproved channel` | 渠道指纹被拦。升级插件到 **0.8.0+**（内置网关 1.10.7 已中和 DSH 文件引用段的指纹）；仍出现说明上游新增了别的指纹，只能等上游跟进 |
+| 模型全部 503、每次卡两分钟，但网关面板能打开 | 进程活着但出网/DNS 已死。看门狗会按日志证据自动重拉；急用就 `POST /workbuddy/gateway/restart`。诊断用 `/workbuddy/diagnose?deep=1`，`checks.outbound.ok=false` 即坐实 |
+| 请求报 `400 / code 11128 Illegal API invocation from an unapproved channel` | 渠道指纹被拦。升级插件到 **0.9.0+**（内置网关 2.0.0 已中和 DSH 文件引用段的指纹）；仍出现说明上游新增了别的指纹，只能等上游跟进 |
 | 聊到一半报 `RATE_LIMIT` / 链接中断 | WorkBuddy 429 冷却约 60 秒，provider 没配 `retryPolicy` → 按「安装 第 2 步」补上（约 2 分半的重试预算） |
 | 「启动网关」报 `port is already in use` | 端口被占。多半是终端里起过、关终端后被 `SIGTTOU` 挂起（`STAT=T`）的僵尸，见下 |
 | 面板提示「无法连接反代」/ 添加账号 405 | 做了路径前缀反代。必须让 iframe **直连** `gatewayUrl`（见「实现约束 1」） |
@@ -327,7 +345,7 @@ window.__ModuleLoader__.load({ id: 'dsh-workbuddy', factory })
 | [Axiaohungry/dsh-llm-workbuddy](https://github.com/Axiaohungry/dsh-llm-workbuddy) | 56 | API Key 接模型 | 只做 provider，无面板 |
 | [tearslee/dsh-workbuddy2api](https://github.com/tearslee/dsh-workbuddy2api) | 4 | 守护网关 + 自动注册 provider | 无面板 |
 | [Wei894348/dsh-wb2api](https://github.com/Wei894348/dsh-wb2api) | 0 | 自建网关 + 面板 | 更重：自己实现网关 |
-| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 3159 | 网关本体 | 本插件内置的就是它（v1.10.7） |
+| [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 3159 | 网关本体 | 本插件内置的就是它（v2.0.0，上游最终版） |
 
 **本插件的定位**：不重造网关，把网关**打进来**并管好生命周期，同时把官方面板嵌进 DSH。
 

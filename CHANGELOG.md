@@ -2,7 +2,7 @@
 
 本插件自带一份 [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 网关（`vendor/wb-proxy`）。每次同步上游都会在这里记一笔，方便对照 `vendor/wb-proxy/UPSTREAM.json` 里的 tag / commit。
 
-## 未发布
+## 0.9.1 — 2026-11-23
 
 **自愈升级：认得「网关活着但出网已死」**
 
